@@ -4,15 +4,20 @@ The C++ sources (`src/`, `viceplugins/`) are still in place and remain the
 reference implementation. The Rust port lives in `rust/` with `Cargo.toml` at
 the repository root (crate `browservice`, binary `browservice`).
 
-**Status after phase 2:** the Rust binary runs the browser server. It starts
+**Status after phase 3:** the Rust binary runs the browser server. It starts
 the vice plugin, creates windowless CEF browsers for the windows the plugin
 asks for, serves their rendered pages to the plugin as window images and
 forwards mouse and keyboard input to CEF. With the C++ `retrojsvice.so` plugin,
 pages are shown and can be used through the plugin's HTTP interface (verified
-end to end, see below). **The control bar (address field, navigation buttons,
-find bar, quality selector, download button) and all text rendering are not
-ported**, so the window shows only the browser view, as with
-`--show-control-bar=false` in the C++ build.
+end to end, see below). Since phase 3 the window has the same default layout
+as the C++ build: the control bar (address field with security icon and
+loading bar, soft navigation buttons, bookmark buttons, find button and find
+bar, clipboard button, quality selector, download button with progress bars)
+is drawn at the top unless `--show-control-bar=false`, text is rendered with
+Pango/FreeType like the C++ build, and browser area error messages are drawn
+in the window again. The window images of the Rust and C++ binaries were
+compared pixel by pixel for the scenarios listed under "Phase 3" below and
+are identical.
 
 ## Ported
 
@@ -33,9 +38,9 @@ Phase 2:
 | `rust/src/vice.rs` | `src/vice.{hpp,cpp}` | `VicePlugin` (phase 1) plus `ViceContext` and `ViceFileUpload`: `initContext` with the `--vice-opt-*` options, `start` with the complete `VicePluginAPI_Callbacks` table (window create/close/resize, image fetch, all mouse/key/focus events, navigation, clipboard, upload, cancel upload), the extensions `URINavigation` (create window with URI, navigate to URI), `WindowTitle`, `ZoomInput` and `PluginNavigationControlSupportQuery`, `eventNotify` from any thread with `pumpEvents` scheduling on the UI thread, the check that callbacks only come from `pumpEvents`, all program-to-plugin calls (popups, close, view changed, cursor, quality selector, clipboard button, clipboard content, file downloads, uploads), shutdown and `destroyContext`. The callback data is deliberately leaked so that late callbacks after shutdown are detected (like the C++ debug build). |
 | `rust/src/server.rs` | `src/server.{hpp,cpp}` | Complete: window creation with `--window-limit`, soft navigation button decision, popups through the plugin, image fetches (1x1 fallback), input forwarding, navigation, clipboard copy/paste requests, uploads, titles, zoom, the shutdown sequence (close windows, wait for CEF cleanup, shut down the plugin, quit the message loop). |
 | `rust/src/window.rs` | `src/window.{hpp,cpp}` | Complete apart from the control bar UI: windowless browser creation (`SetAsWindowless`, opaque white background) with the `--start-page` or the URI from the plugin, the window lifecycle (Open, Closed, CleanupComplete), all client handlers: life span (popups as new windows, deferred close), load (error page detection, refresh of focus/mouse state), display (address, title, cursor), request (`--block-file-scheme`, `--certificate-check-exceptions`, signed data URL error pages, security status updates from the IO thread), find, keyboard (Backspace/Shift+Backspace navigation), file dialog (uploads through the plugin), context menu (cleared), render and download handlers; zoom (`--initial-zoom`, steps of the sixth root of 2) with the 250 ms watchdog; global hotkeys (Ctrl+R/F5 refresh, Ctrl+K/J/M zoom). |
-| `rust/src/browser_area.rs` | `src/browser_area.{hpp,cpp}` | Complete except the error text: the render handler copies dirty rectangles of the off-screen view and popup buffers (e.g. `<select>` dropdowns) into the window image with change detection; mouse (buttons, double click, wheel, enter/leave), key (RAWKEYDOWN + CHAR, KEYUP, modifier tracking, AltGr workaround, Ctrl+X/C/V through the focused frame) and focus events go to the CEF browser host. In error mode the view is white and the message is written to the log instead of being drawn (text rendering is not ported). |
+| `rust/src/browser_area.rs` | `src/browser_area.{hpp,cpp}` | Complete: the render handler copies dirty rectangles of the off-screen view and popup buffers (e.g. `<select>` dropdowns) into the window image with change detection; mouse (buttons, double click, wheel, enter/leave), key (RAWKEYDOWN + CHAR, KEYUP, modifier tracking, AltGr workaround, Ctrl+X/C/V through the focused frame) and focus events go to the CEF browser host. In error mode the view is white and the message is drawn at the top in dark red (since phase 3). |
 | `rust/src/widget.rs` | `src/widget.{hpp,cpp}` | Complete widget base: viewport, render, focus and mouse-over routing, button/key state cleanup, cursors, global hotkeys. |
-| `rust/src/root_widget.rs` | `src/root_widget.{hpp,cpp}`, interface of `src/control_bar.hpp` | Root widget with the browser area over the whole viewport. `ControlBar` is only a state holder (address, title, loading, security status, quality selector, clipboard button, downloads, find result) that the window updates; it is not drawn and takes no space. |
+| `rust/src/root_widget.rs` | `src/root_widget.{hpp,cpp}` | Complete (since phase 3): control bar (27 pixels) above the browser area, or only the browser area with `--show-control-bar=false`. |
 | `rust/src/image_slice.rs` | `src/image_slice.{hpp,cpp}`, `src/rect.hpp` | Complete (shared BGRx buffers, sub-slices, fill, put, clone). |
 | `rust/src/key.rs` | `src/key.{hpp,cpp}`, `src/key_codes.hpp` | Complete. |
 | `rust/src/download_manager.rs` | `src/download_manager.{hpp,cpp}` | Complete: pending queue, accept, progress, cancel, `CompletedDownload` that deletes the file (and releases the temporary directory) when the plugin calls the cleanup function from any thread. |
@@ -46,7 +51,7 @@ Phase 2:
 | `rust/src/clipboard.rs` | `src/clipboard.{hpp,cpp}` | Complete, through the patch symbols. |
 | `rust/src/timeout.rs` | `src/timeout.{hpp,cpp}` | Complete. |
 | `rust/src/ui.rs` | `postTask` in `src/common.cpp` | Posting closures to the CEF UI thread (UI-thread closures and `Send` closures from any thread). |
-| `rust/src/globals.rs` | `src/globals.{hpp,cpp}` | Configuration and dot directory, readable from any thread (the text render context belongs to the control bar port). |
+| `rust/src/globals.rs` | `src/globals.{hpp,cpp}` | Configuration and dot directory, readable from any thread. The text render context is not `Send`; it is a thread-local in `rust/src/text.rs`, created by `main` where the C++ `Globals` constructor creates it. |
 | `rust/src/cef_app.rs`, `rust/src/main.rs` | `App` and `main` in `src/main.cpp` | Plugin load and context init before CEF, `CefInitialize`, scheme handler factory, request context (incognito or `--data-dir`), server creation in `OnContextInitialized`, 200 ms termination signal polling, shutdown before quitting the message loop, `CefShutdown`. |
 
 Phase 3 (control bar and text rendering):
@@ -54,6 +59,13 @@ Phase 3 (control bar and text rendering):
 | Rust module | C++ origin | Status |
 |---|---|---|
 | `rust/src/text.rs` | `src/text.{hpp,cpp}` | Complete: `TextRenderContext` (PangoFT2 font map with the same fontconfig substitutions, 72 DPI, `Verdana 11`, `en-US`, LTR, `FREETYPE_PROPERTIES=truetype:interpreter-version=35` while the font map is created), `TextLayout` (extents, x/index conversion, visual cursor movement, graymap rendering with the 128 threshold) and `OverflowTextLayout`. The global context is created in `main` at the same point as the C++ `Globals` constructor. |
+| `rust/src/image_slice.rs` | `ImageSlice::createImageFromStrings` | Added (icons). |
+| `rust/src/button.rs` | `src/button.{hpp,cpp}` | Complete (download button). |
+| `rust/src/menu_button.rs` | `src/menu_button.{hpp,cpp}` | Complete: passive/active icon, frame on hover/press, pressed event with the button identity, Enter/Esc forwarding. |
+| `rust/src/text_field.rs` | `src/text_field.{hpp,cpp}` | Complete: caret with 500 ms blink, selection (inverted, same byte order quirk as C++, i.e. dark blue), mouse/Shift selection, Left/Right/Home/End, Backspace/Delete, typing, Ctrl+A/C/X/V through the clipboard module, Enter submit (remove caret / allow empty options), Up/Down/Esc/wheel forwarding, lost-focus-after-edit. |
+| `rust/src/find_bar.rs` | `src/find_bar.{hpp,cpp}` | Complete: open/close/activate, incremental find, find next/previous buttons, Enter/Esc, not-found background. |
+| `rust/src/quality_selector.rs` | `src/quality_selector.{hpp,cpp}` | Complete: label matching (exact, then ignoring spaces and case), up/down buttons with 500/50 ms mouse repeat, Up/Down keys, wheel, disabled arrows at the ends. |
+| `rust/src/control_bar.rs` | `src/control_bar.{hpp,cpp}` | Complete: all icons (patterns and palettes copied from the C++ source), `Layout` with the same arithmetic, frame/separators/labels/address box/security icon rendering, loading bar animation (30 ms timeout, 5 s period), download button and progress bars, find bar, quality selector, clipboard button, soft navigation buttons, bookmark toggle (writes `~/.browservice/bookmarks`), and all events wired to the window as in C++ (address submit, go, bookmarks page, find, clipboard, back/forward/refresh/home, quality change, pending download accepted). |
 
 Text rendering library choice: the Pango, PangoFT2, GObject and fontconfig
 functions are declared by hand in `rust/src/text.rs` (module `ffi`, about 25
@@ -89,20 +101,9 @@ files (`libpango1.0-dev` on Debian/Ubuntu) and `pkg-config`.
   (verified with the smoke test against the C++ binary, see below).
 - The render handler never reads outside the paint buffer if CEF paints with a
   size that differs from the current viewport.
-- Error messages of the browser area are logged (`Browser area shows error:
-  ...`) instead of drawn.
 
 ## Not ported yet
 
-- **Control bar and text rendering**: `src/control_bar.cpp`, `text.cpp`
-  (Pango), `widget` subclasses `text_field.cpp`, `button.cpp`,
-  `menu_button.cpp`, `quality_selector.cpp`, `find_bar.cpp`. Consequences: no
-  address field, buttons, find bar, quality selector, bookmark toggle,
-  clipboard or download buttons inside the window image; pending downloads
-  cannot be accepted (the C++ build also needs the control bar for that), and
-  the plugin's quality and clipboard button information is only stored.
-  `--show-control-bar=true` (the default) prints a warning and behaves like
-  `false`.
 - Dedicated Xvfb (`src/xvfb.cpp`). The `--use-dedicated-xvfb` option is parsed,
   but the Rust binary prints a warning and uses the `DISPLAY` of the
   environment.
@@ -140,6 +141,9 @@ with the Browservice Chromium patch, which exports the
 cargo build --release
 ```
 
+The text renderer needs `pkg-config` and the PangoFT2 development files
+(`pangoft2` and `fontconfig` pkg-config packages), as for the C++ build.
+
 Development/test build against **stock** CEF:
 
 ```sh
@@ -173,6 +177,113 @@ nothing with it. A binary built with the stub prints a warning at startup in
 normal mode.
 
 ## Verification results
+
+### Phase 3: control bar and text rendering
+
+Same environment as phase 2. Commands (scratch paths shortened):
+
+```sh
+export CEF_PATH=/path/to/cef156rust     # stock CEF 156 prepared as above
+cargo build --release --features stub-patch   # no warnings
+cargo test --release --features stub-patch    # 46 passed, 0 failed, 1 ignored
+cp /path/to/full156/viceplugins/retrojsvice/release/lib/retrojsvice.so target/release/
+cd target/release
+xvfb-run -a ./browservice --use-dedicated-xvfb=no --chromium-args=no-sandbox \
+    --vice-opt-http-listen-addr=127.0.0.1:18081
+curl -s -o /dev/null -w "status=%{http_code} type=%{content_type} size=%{size_download}\n" \
+    http://127.0.0.1:18081/
+# status=200 type=text/html; charset=UTF-8 size=218
+```
+
+1. Text rendering: `tools/text_dump.cpp` repeats the Pango/FreeType calls of
+   `src/text.cpp` in a standalone program; the ignored unit test
+   `text::dump::dump` prints the same format (width, height, cursor x
+   positions of every character boundary, thresholded graymap) for the Rust
+   renderer:
+
+   ```sh
+   g++ -std=c++17 -O2 tools/text_dump.cpp -o text_dump `pkg-config --cflags --libs pangoft2`
+   ./text_dump in.txt > cpp.txt
+   TEXT_DUMP_IN=in.txt TEXT_DUMP_OUT=rs.txt \
+       cargo test --release --features stub-patch text::dump -- --ignored
+   cmp cpp.txt rs.txt
+   ```
+
+   With nine lines (the control bar labels, "Download (1)", two error
+   messages, a URL and a mixed character line) the outputs are identical (144
+   lines; e.g. `text "Address" width 44 height 14`, `cursor 0 8 15 22 26 32
+   38 44`). (On the test machine fontconfig resolves `Verdana` to the
+   installed fallback font, the same for both.)
+
+2. Smoke test (now with the control bar shown by default; it checks the
+   control bar frame, label and address text, shifts all page coordinates by
+   the 27 pixel bar, and accepts a download through the control bar):
+
+   ```sh
+   PAGE=$(python3 tools/rust_port_smoke_test.py --print-start-page)
+   xvfb-run -a ./target/release/browservice --use-dedicated-xvfb=no \
+       --chromium-args=no-sandbox --vice-opt-http-listen-addr=127.0.0.1:18081 \
+       --start-page="$PAGE"
+   python3 tools/rust_port_smoke_test.py http://127.0.0.1:18081
+   ```
+
+   Output with the Rust binary:
+
+   ```
+   GET / -> 200 text/html; charset=UTF-8 (218 bytes)
+   main page: prefix=/3/aCbn0DI4jrxuYZySBforfPNtrH55XZV6 mainIdx=1 cipher length=2127
+   OK: control bar drawn above the page (image/png, 8010 bytes, 641x481, pixel(100,100)=(0, 0, 255), pixel(500,300)=(255, 0, 0))
+   OK: rendered test page (blue square on red) (image/png, 8010 bytes, 641x481, pixel(100,100)=(0, 0, 255), pixel(500,300)=(255, 0, 0))
+   OK: mouse click handled (background green) (image/png, 8010 bytes, 641x481, pixel(100,100)=(0, 0, 255), pixel(500,300)=(0, 255, 0))
+   OK: key presses handled (background yellow) (image/png, 9129 bytes, 641x482, pixel(100,100)=(0, 0, 255), pixel(500,300)=(255, 255, 0))
+   OK: file upload delivered to the page (background magenta) (image/png, 8107 bytes, 640x481, pixel(100,100)=(0, 0, 255), pixel(500,300)=(255, 0, 255))
+   GET goto/browservice://bookmarks/ -> 200
+   main page: prefix=/3/aCbn0DI4jrxuYZySBforfPNtrH55XZV6 mainIdx=2 cipher length=2234
+   OK: browservice://bookmarks/ page (white page with heading text) (image/png, 12729 bytes, 640x481, pixel(100,100)=(255, 255, 255), pixel(500,300)=(255, 255, 255))
+   OK: clipboard set/get round trip through the server
+   GET goto/http://127.0.0.1:18082/smoke.bin -> 200
+   main page: prefix=/3/aCbn0DI4jrxuYZySBforfPNtrH55XZV6 mainIdx=3 cipher length=2430
+   OK: download button shown in the control bar (image/png, 12741 bytes, 640x481, pixel(100,100)=(255, 255, 255), pixel(500,300)=(255, 255, 255))
+   OK: download accepted from the control bar and served by the plugin (/3/aCbn0DI4jrxuYZySBforfPNtrH55XZV6/download/1/smoke.bin, 3000 bytes)
+   ALL CHECKS PASSED
+   ```
+
+   The C++ binary (default options, same command) passes the control bar,
+   page, click, key and upload checks with PNG images of the same sizes
+   (8010, 8010, 9129, 8107 bytes); the images of the click, key and upload
+   steps are pixel-identical to the Rust ones, control bar included (the
+   first image differed only in the page area because the C++ window had not
+   painted the page yet when the bar check passed). It then fails the
+   bookmark check as described in phase 2. With `--show-control-bar=false`
+   and `--no-control-bar`, the Rust binary passes all checks of phase 2.
+
+3. Pixel comparison of UI states with `tools/rust_port_image_compare.py`
+   (Rust and C++ binaries started one after the other with
+   `--start-page=about:blank` and the same options, 640x480 window, images
+   decoded and compared pixel by pixel with its `compare` mode):
+
+   | Scenario (options) | Images | Result |
+   |---|---|---|
+   | `static` (default) | bar with address, security icon, go/bookmark buttons, bookmarks/find/clipboard buttons, "Quality" label and PNG selector | identical (0 differing pixels, 641x481, 4047 bytes each) |
+   | `static` (`--show-soft-navigation-buttons=true`) | back/forward/refresh/home buttons and separator added | identical |
+   | `static` (`--show-control-bar=false`) | browser area only | identical |
+   | `hover` | find button pressed (frame and active icon), find bar opened with "ex" typed (layout with find bar, "Find" label, arrow and close icons), find bar closed with Esc | all 4 images identical |
+   | `address` | address field clicked (text selected, inverted), "abc" typed, Left, Shift+Left (selection of "b", caret) | both images identical |
+   | `quality` | quality selector down button pressed, then quality "100" (JPEG images) | both images identical |
+   | `goto file:///etc/hostname` | error message "Access to files through the file:// URI scheme is blocked ..." drawn in dark red below the bar | identical |
+   | `goto http://nonexistent.invalid/` | "Loading URL failed due to error: ERR_NAME_NOT_RESOLVED" drawn | identical |
+   | `download` | "Download (1)" button next to the quality selector, pressed button, bar after the download was accepted | all 3 images identical |
+
+   The decoded Rust images were also inspected visually (control bar layout,
+   icons, text field selection, find bar, error text, download button).
+
+Not verified end to end in phase 3: the download progress bars (the local
+test download finishes too fast to catch them), the loading bar animation
+(timing dependent, not compared pixel by pixel), the bookmark toggle button
+and the find result background (not exercised by the scripts), and the
+mouse-over frame of icon buttons without a press (in the `hover` scenario the
+first mouse move over the go button did not change the image for either
+binary).
 
 ### Phase 2: browser server
 
@@ -257,13 +368,13 @@ NULL).
 
    | Run | Navigation | Result |
    |---|---|---|
-   | default options | `file:///etc/hostname` | log `Browser area shows error: Access to files through the file:// URI scheme is blocked ...`, white view |
+   | default options | `file:///etc/hostname` | log `Browser area shows error: Access to files through the file:// URI scheme is blocked ...`, white view (phase 2; since phase 3 the message is drawn instead of logged) |
    | `--block-file-scheme=false` | `file:///etc/hostname` | file content (`vm`) rendered in the window image |
    | default options, local HTTPS server with a self-signed certificate on 127.0.0.1:18443 | `https://127.0.0.1:18443/` | log `Invalid certificate for domain '127.0.0.1:18443', canceling request. ...` and `Browser area shows error: Loading URL failed due to error: ERR_CERT_AUTHORITY_INVALID` (the C++ binary draws the same message) |
    | `--certificate-check-exceptions=127.0.0.1:18443` | `https://127.0.0.1:18443/` | the page (green background, "TLS OK") rendered |
    | `--window-limit=2`, third `GET /` | | plugin answers `ERROR: Could not create window, reason: Maximum number of concurrent windows exceeded`; log `Denying window creation due to window limit` |
 
-Not verified end to end: accepting downloads (needs the control bar), popup
+Not verified end to end in phase 2: accepting downloads (verified in phase 3), popup
 windows opened by pages, zoom commands, window titles, and the real Chromium
 clipboard and font render settings (they need the patched CEF; only the
 in-process test stub was exercised).
@@ -278,7 +389,7 @@ built from `viceplugins/retrojsvice` copied into `target/release/`.
 |---|---|
 | `cargo build --release --features stub-patch` | builds (about 50 s from clean) |
 | `cargo build --release` (stock CEF, no stub) | link fails as expected: `undefined symbol: cef_chromiumBrowserviceFontRenderParams...` |
-| `cargo test --release --features stub-patch` | 36 passed, 0 failed (phase 2) |
+| `cargo test --release --features stub-patch` | 36 passed, 0 failed (phase 2); 46 passed, 1 ignored (phase 3) |
 | `cargo test --release` | 35 passed, 0 failed (the stub clipboard test needs the feature) |
 | `./browservice --version` | exit 0, output below |
 | `./browservice --help` | exit 0 |
