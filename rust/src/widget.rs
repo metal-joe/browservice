@@ -708,3 +708,44 @@ mod tests {
         );
     }
 }
+
+/// Helpers for widget unit tests.
+#[cfg(test)]
+pub mod test_util {
+    use super::*;
+
+    /// A top-level parent that counts dirty notifications.
+    #[derive(Default)]
+    pub struct TestParent {
+        pub dirty: Cell<u32>,
+        pub hotkeys: RefCell<Vec<GlobalHotkey>>,
+    }
+
+    impl WidgetParent for TestParent {
+        fn on_widget_view_dirty(&self) {
+            self.dirty.set(self.dirty.get() + 1);
+        }
+        fn on_widget_cursor_changed(&self) {}
+        fn on_global_hotkey_pressed(&self, key: GlobalHotkey) {
+            self.hotkeys.borrow_mut().push(key);
+        }
+    }
+
+    pub fn test_parent() -> (Rc<TestParent>, Weak<dyn WidgetParent>) {
+        let parent = Rc::new(TestParent::default());
+        let dyn_parent: Rc<dyn WidgetParent> = parent.clone();
+        let weak = Rc::downgrade(&dyn_parent);
+        (parent, weak)
+    }
+
+    /// Text rendering of an image region: '#' for pixels equal to `rgb`.
+    pub fn ascii(image: &ImageSlice, rgb: (u8, u8, u8)) -> Vec<String> {
+        (0..image.height())
+            .map(|y| {
+                (0..image.width())
+                    .map(|x| if image.get_pixel(x, y) == rgb { '#' } else { '.' })
+                    .collect()
+            })
+            .collect()
+    }
+}

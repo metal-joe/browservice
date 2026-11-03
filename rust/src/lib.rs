@@ -3,6 +3,7 @@
 pub mod common;
 
 pub mod bookmarks;
+pub mod button;
 pub mod browser_font_render_mode;
 pub mod cef_app;
 pub mod chromium_patch;
@@ -13,6 +14,7 @@ pub mod data_url;
 pub mod globals;
 pub mod image_slice;
 pub mod key;
+pub mod menu_button;
 pub mod scheme;
 pub mod sha3;
 pub mod temp_dir;

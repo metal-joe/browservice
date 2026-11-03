@@ -103,6 +103,30 @@ impl ImageSlice {
         }
     }
 
+    /// Creates an image from rows of characters, each character standing for
+    /// the RGB color given in `colors` (`createImageFromStrings`). All rows
+    /// must have the same length and every character must have a color.
+    pub fn create_image_from_strings(rows: &[&str], colors: &[(char, [u8; 3])]) -> ImageSlice {
+        if rows.is_empty() {
+            return Self::create_image(0, 0, 255);
+        }
+        let height = rows.len() as i32;
+        let width = rows[0].len() as i32;
+        if rows.iter().any(|row| row.len() != width as usize) {
+            crate::panic_log!("Requirement 'rows[y].size() == (size_t)width' failed");
+        }
+        let ret = Self::create_image(width, height, 0);
+        for (y, row) in rows.iter().enumerate() {
+            for (x, c) in row.bytes().enumerate() {
+                let Some((_, [r, g, b])) = colors.iter().find(|(k, _)| *k as u32 == c as u32) else {
+                    crate::panic_log!("Requirement 'it != colors.end()' failed");
+                };
+                ret.set_pixel(x as i32, y as i32, *r, *g, *b);
+            }
+        }
+        ret
+    }
+
     pub fn width(&self) -> i32 {
         self.width
     }
@@ -292,6 +316,20 @@ impl ImageSlice {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_strings() {
+        let img = ImageSlice::create_image_from_strings(
+            &["ab", "ba", "aa"],
+            &[('a', [1, 2, 3]), ('b', [255, 0, 7])],
+        );
+        assert_eq!((img.width(), img.height()), (2, 3));
+        assert_eq!(img.get_pixel(0, 0), (1, 2, 3));
+        assert_eq!(img.get_pixel(1, 0), (255, 0, 7));
+        assert_eq!(img.get_pixel(0, 1), (255, 0, 7));
+        assert_eq!(img.get_pixel(1, 2), (1, 2, 3));
+        assert!(ImageSlice::create_image_from_strings(&[], &[]).is_empty());
+    }
 
     #[test]
     fn rect_ops() {
