@@ -253,13 +253,16 @@ def main():
 
     s.goto("browservice://bookmarks/")
     def bookmarks_shown(im):
+        # The "Bookmarks" heading is large bold black text below the top
+        # margin; the error message shown on failure is small dark red text
+        # at the very top.
         dark = sum(
             1
-            for x in range(0, 300, 2)
-            for y in range(0, 80, 2)
-            if sum(px(im, x, y) or (255, 255, 255)) < 200
+            for x in range(0, 300)
+            for y in range(25, 70)
+            if max(px(im, x, y) or (255, 255, 255)) < 60
         )
-        return near(px(im, 500, 300), (255, 255, 255)) and dark > 20
+        return near(px(im, 500, 300), (255, 255, 255)) and dark > 200
     wait_for(s, bookmarks_shown, "browservice://bookmarks/ page (white page with heading text)")
     check_clipboard(s.base)
     print("ALL CHECKS PASSED")
