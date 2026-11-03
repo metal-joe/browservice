@@ -4,7 +4,9 @@
 
 **Browservice is no longer maintained.** I, [@ttalvitie](https://github.com/ttalvitie/), will not be making new releases, providing updated binaries, fixing bugs, answering issues or reviewing pull requests.
 
-**Security warning:** the final release (v0.9.12.2, 2026-02-09) bundles a Chromium version from early 2026, and I will not be updating it. The security model of Browservice rests on the premise that the embedded Chromium browser is kept up to date; that premise no longer holds for these binaries, and will hold less and less as time passes. To keep using Browservice safely, build it against a current CEF release yourself. I apologize for the delay in this decision; in the [2024 notice](https://github.com/ttalvitie/browservice/blob/v0.9.12.2/README.md#notice-2024-06-27) I said I would focus on providing up-to-date builds, and at the time of writing there has already been a gap of several months.
+**Security warning:** the final release (v0.9.12.2, 2026-02-09) bundles a Chromium version from early 2026, and its binaries are not being updated. The security model of Browservice rests on the premise that the embedded Chromium browser is kept up to date; that premise does not hold for these binaries, and will hold less and less as time passes.
+
+**Source code updated to CEF 156:** the source in this repository now targets CEF 156 (Chromium 156.0.8078.80, CEF branch 8078, commit `cf671c0`) instead of the Chromium version of v0.9.12.2. No prebuilt binaries for this version are published. The source has been compile-checked against the CEF 156 headers and a Browservice binary has been run against the stock CEF 156 distribution, but the patched CEF build has not yet been built end-to-end. To run Browservice with a current Chromium, build it from this source following [BUILD.md](BUILD.md) and keep the CEF version up to date.
 
 **Forking is encouraged.** Browservice is MIT licensed, so anyone may fork, modify, build and distribute it without asking me.
 
