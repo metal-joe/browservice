@@ -64,13 +64,6 @@ fn run() -> i32 {
         );
     }
 
-    if config.show_control_bar {
-        warning_log!(
-            "The control bar is not ported yet; the browser view covers the whole window \
-             (like --show-control-bar=false)"
-        );
-    }
-
     let data_dir = config.data_dir.clone();
     let user_agent = config.user_agent.clone();
     let chromium_args = config.chromium_args.clone();

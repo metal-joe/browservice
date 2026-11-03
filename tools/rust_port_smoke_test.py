@@ -11,7 +11,14 @@ Start the server with the test page as start page, for example:
       --vice-opt-http-listen-addr=127.0.0.1:18081 --start-page="$PAGE"
   python3 tools/rust_port_smoke_test.py http://127.0.0.1:18081
 
+If the server runs with --show-control-bar=false, pass --no-control-bar
+after the URL (the page then starts at the top of the window instead of
+below the 27 pixel control bar).
+
 Checks:
+  0. The control bar is drawn at the top (frame, background, "Address"
+     label, address field showing the start page URL) unless
+     --no-control-bar is given.
   1. GET / returns 200 and an HTML page (the window redirect page).
   2. The window image shows the test page (blue square on red background).
   3. A mouse click on the square (MDN/MUP events) runs its onclick handler,
@@ -51,6 +58,8 @@ PAGE = (
 
 W, H = 640, 480
 PASSED = []
+# Height of the control bar (ControlBar::Height); set to 0 by --no-control-bar.
+Y = 27
 
 
 def start_page():
@@ -111,6 +120,9 @@ class Session:
         path = (f"{self.prefix}/image/{self.main_idx}/{self.img_idx}/1/{W}/{H}/"
                 f"{self.event_idx}/")
         for e in events:
+            m = re.match(r"(MMO|MDN|MUP|MDBL|MWH)_(-?\d+)_(-?\d+)(.*)", e)
+            if m:
+                e = f"{m.group(1)}_{m.group(2)}_{int(m.group(3)) + Y}{m.group(4)}"
             path += e + "/"
         self.event_idx += len(events)
         status, ctype, body = get(self.base + path)
@@ -129,8 +141,10 @@ def near(c, ref, tol=40):
 
 
 def px(im, x, y):
-    """Pixel value, or None if outside the image (images served before the
-    window has been resized to the requested size may be smaller)."""
+    """Pixel value at page coordinates (x, y) (the control bar height is
+    added), or None if outside the image (images served before the window has
+    been resized to the requested size may be smaller)."""
+    y += Y
     if x < im.size[0] and y < im.size[1]:
         return im.getpixel((x, y))
     return None
@@ -177,14 +191,38 @@ def check_clipboard(base):
     print("OK: clipboard set/get round trip through the server")
 
 
+def control_bar_shown(im):
+    """Frame and background of the control bar (src/control_bar.cpp
+    widgetRender_), the "Address" label (black pixels) and the address field
+    (white box with black text)."""
+    if px(im, 100, 100 - Y) is None:
+        return False
+    g = lambda x, y: im.getpixel((x, y))
+    if g(0, 0) != (255, 255, 255) or g(5, 1) != (192, 192, 192):
+        return False
+    if g(5, 26) != (0, 0, 0) or g(5, 25) != (128, 128, 128) or g(5, 24) != (255, 255, 255):
+        return False
+    label = sum(1 for x in range(1, 53) for y in range(1, 23) if g(x, y) == (0, 0, 0))
+    field_text = sum(1 for x in range(76, 300) for y in range(3, 19) if g(x, y) == (0, 0, 0))
+    return label > 30 and field_text > 30 and g(200, 5) == (255, 255, 255)
+
+
 def main():
+    global Y
     if len(sys.argv) == 2 and sys.argv[1] == "--print-start-page":
         print(start_page())
         return
-    if len(sys.argv) != 2:
+    args = sys.argv[1:]
+    if "--no-control-bar" in args:
+        args.remove("--no-control-bar")
+        Y = 0
+    if len(args) != 1:
         print(__doc__)
         sys.exit(2)
-    s = Session(sys.argv[1].rstrip("/"))
+    s = Session(args[0].rstrip("/"))
+
+    if Y:
+        wait_for(s, control_bar_shown, "control bar drawn above the page")
 
     img = wait_for(
         s,

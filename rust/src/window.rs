@@ -28,7 +28,8 @@ use crate::download_manager::{
 use crate::globals::globals;
 use crate::image_slice::ImageSlice;
 use crate::key::{is_valid_key, keys};
-use crate::root_widget::{ControlBarEventHandler, RootWidget, SecurityStatus};
+use crate::control_bar::{ControlBarEventHandler, SecurityStatus};
+use crate::root_widget::RootWidget;
 use crate::timeout::Timeout;
 use crate::vice::ViceFileUpload;
 use crate::widget::{
