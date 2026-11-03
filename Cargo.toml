@@ -1,0 +1,39 @@
+[package]
+name = "browservice"
+version = "0.9.12"
+edition = "2024"
+description = "Browse the modern web on historical browsers (Rust port)"
+license = "MIT"
+build = "rust/build.rs"
+autobins = false
+autotests = false
+autoexamples = false
+autobenches = false
+
+[lib]
+name = "browservice"
+path = "rust/src/lib.rs"
+
+[[bin]]
+name = "browservice"
+path = "rust/src/main.rs"
+
+[features]
+default = []
+# TEST/DEV ONLY: links stub implementations of the symbols that the Browservice
+# Chromium patch adds to libcef.so, so that the binary can be linked and run
+# against a stock (unpatched) CEF distribution. Never enable this for builds
+# that are distributed or used in production: the stubs do nothing (clipboard
+# and font render mode settings are silently ignored).
+stub-patch = []
+
+[dependencies]
+# cef 156.3.0+156.0.15 (Rust bindings for CEF 156.0.15+gcf671c0+chromium-156.0.8078.80).
+# Cargo ignores build metadata in version requirements, so it is pinned as =156.3.0
+# here; Cargo.lock records the full version.
+cef = { version = "=156.3.0", default-features = false }
+libc = "0.2"
+libloading = "0.8"
+
+[profile.release]
+debug = false

@@ -38,3 +38,6 @@ debug
 release
 gen
 GPUCache
+
+# Rust build output
+/target/
