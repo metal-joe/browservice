@@ -2,11 +2,8 @@
 //! browser. Its CEF render handler copies the off-screen paint buffer (view
 //! and popup widgets such as `<select>` dropdowns) into the widget viewport,
 //! which is a part of the window image slice served to the vice plugin, and
-//! input events are forwarded to the CEF browser host.
-//!
-//! Not ported yet: the error message text (the C++ version renders it with
-//! Pango through `TextLayout`, which belongs to the text rendering port); the
-//! error mode shows a white page and logs the message instead.
+//! input events are forwarded to the CEF browser host. In error mode, the
+//! view is white with the error message drawn at the top.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Weak;
@@ -15,6 +12,7 @@ use cef::*;
 
 use crate::image_slice::Rect;
 use crate::key::{is_valid_key, key_codes, keys};
+use crate::text::TextLayout;
 use crate::widget::{Widget, WidgetBase, WidgetExt, WidgetParent};
 
 pub trait BrowserAreaEventHandler {
@@ -107,7 +105,7 @@ pub struct BrowserArea {
     popup_rect: Cell<Rect>,
     event_modifiers: Cell<u32>,
     error_active: Cell<bool>,
-    error_message: RefCell<String>,
+    error_layout: TextLayout,
 }
 
 crate::impl_widget_parent_for_widget!(BrowserArea);
@@ -125,7 +123,7 @@ impl BrowserArea {
             popup_rect: Cell::new(Rect::default()),
             event_modifiers: Cell::new(0),
             error_active: Cell::new(false),
-            error_message: RefCell::new(String::new()),
+            error_layout: TextLayout::new(),
         }
     }
 
@@ -156,9 +154,8 @@ impl BrowserArea {
     /// Switches to a mode that only shows an error message until
     /// [`BrowserArea::clear_error`] is called.
     pub fn show_error(&self, message: String) {
-        crate::info_log!("Browser area shows error: {}", message);
         self.error_active.set(true);
-        *self.error_message.borrow_mut() = message;
+        self.error_layout.set_text(message);
         if let Some(host) = self.host() {
             host.invalidate(PaintElementType::VIEW);
             host.invalidate(PaintElementType::POPUP);
@@ -167,7 +164,7 @@ impl BrowserArea {
 
     pub fn clear_error(&self) {
         self.error_active.set(false);
-        self.error_message.borrow_mut().clear();
+        self.error_layout.set_text(String::new());
         if let Some(host) = self.host() {
             host.invalidate(PaintElementType::VIEW);
             host.invalidate(PaintElementType::POPUP);
@@ -176,7 +173,7 @@ impl BrowserArea {
 
     pub fn error_message(&self) -> Option<String> {
         if self.error_active.get() {
-            Some(self.error_message.borrow().clone())
+            Some(self.error_layout.text())
         } else {
             None
         }
@@ -235,6 +232,8 @@ impl BrowserArea {
 
         if self.error_active.get() {
             viewport.fill(0, viewport.width(), 0, viewport.height(), 255);
+            self.error_layout
+                .render_rgb(&viewport.split_y(20).0, 7, 0, 96, 0, 0);
             updated = true;
         } else {
             let mut offset_x = 0;
