@@ -6,8 +6,8 @@ import sys
 import urllib.request
 from base64 import b64encode
 
-DEFAULT_BRANCH = "7559"
-DEFAULT_COMMIT = "9f739aa"
+DEFAULT_BRANCH = "8078"
+DEFAULT_COMMIT = "cf671c0"
 
 # Created at the end of the file.
 PATCHER_SCRIPT = None
@@ -161,6 +161,7 @@ CLIPBOARD_IMPLEMENTATION_H_CODE = b"""\
 CLIPBOARD_IMPLEMENTATION_CC_CODE = b"""\
 // Native clipboard implementation replaced by Browservice non-backed clipboard.
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -170,14 +171,23 @@ CLIPBOARD_IMPLEMENTATION_CC_CODE = b"""\
 #include <string_view>
 #include <vector>
 
+#include "base/containers/flat_set.h"
+#include "base/strings/utf_string_conversions.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/clipboard_constants.h"
-#include "base/strings/utf_string_conversions.h"
+#include "url/gurl.h"
 
 namespace {
     std::mutex browserviceClipboardMutex;
     std::string* browserviceClipboardText;
     uint64_t browserviceClipboardSeqNum;
+
+    // Must be called with browserviceClipboardMutex held.
+    void ensureBrowserviceClipboardTextLocked() {
+        if(browserviceClipboardText == nullptr) {
+            browserviceClipboardText = new std::string;
+        }
+    }
 }
 
 #ifdef USE_OZONE
@@ -188,9 +198,7 @@ namespace {
 
 BROWSERVICE_EXPORT extern "C" char* cef_chromiumBrowserviceClipboardPaste() {
     std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
-    if(browserviceClipboardText == nullptr) {
-        browserviceClipboardText = new std::string;
-    }
+    ensureBrowserviceClipboardTextLocked();
     const char* src = browserviceClipboardText->c_str();
     size_t count = browserviceClipboardText->size() + 1;
     char* str = new char[count];
@@ -202,10 +210,8 @@ BROWSERVICE_EXPORT extern "C" void cef_chromiumBrowserviceClipboardFreePasteResu
 }
 BROWSERVICE_EXPORT extern "C" void cef_chromiumBrowserviceClipboardCopy(const char* str) {
     std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
-    if(browserviceClipboardText == nullptr) {
-        browserviceClipboardText = new std::string;
-    }
-    *browserviceClipboardText = str;
+    ensureBrowserviceClipboardTextLocked();
+    *browserviceClipboardText = (str != nullptr) ? str : "";
     ++browserviceClipboardSeqNum;
 }
 
@@ -217,105 +223,115 @@ public:
     ClipboardBrowservice& operator=(const ClipboardBrowservice&) = delete;
 
 private:
-    mutable struct {
-        uint64_t sequence_number;
-        ClipboardSequenceNumberToken token;
-    } clipboard_sequence_;
+    // Cache of the sequence number token; it is replaced whenever the global
+    // Browservice clipboard sequence number changes. Initialized explicitly so
+    // that GetSequenceNumber never observes uninitialized memory.
+    mutable uint64_t clipboard_seq_cached_ = 0;
+    mutable ClipboardSequenceNumberToken clipboard_token_cached_;
 
     ClipboardBrowservice() {}
     ~ClipboardBrowservice() override {}
 
     void OnPreShutdown() override {}
-    std::optional<DataTransferEndpoint> GetSource(ClipboardBuffer buffer) const override {
-        return std::nullopt;
+
+    void GetSource(ClipboardBuffer buffer, GetSourceCallback callback) const override {
+        std::move(callback).Run(std::nullopt);
     }
+
     const ClipboardSequenceNumberToken& GetSequenceNumber(ClipboardBuffer buffer) const override {
         uint64_t sequence_number;
         {
             std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
             sequence_number = browserviceClipboardSeqNum;
         }
-        if(sequence_number != clipboard_sequence_.sequence_number) {
-            clipboard_sequence_ = {sequence_number, ClipboardSequenceNumberToken()};
+        if(sequence_number != clipboard_seq_cached_) {
+            clipboard_seq_cached_ = sequence_number;
+            clipboard_token_cached_ = ClipboardSequenceNumberToken();
         }
-        return clipboard_sequence_.token;
+        return clipboard_token_cached_;
     }
-    std::vector<std::u16string> GetStandardFormats(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst) const override {
+
+    void GetStandardFormats(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, GetStandardFormatsCallback callback) const override {
         std::vector<std::u16string> types;
         types.push_back(kMimeTypePlainText16);
-        return types;
+        std::move(callback).Run(std::move(types));
     }
-    bool IsFormatAvailable(const ClipboardFormatType& format, ClipboardBuffer buffer, const DataTransferEndpoint* data_dst) const override {
-        return format == ClipboardFormatType::PlainTextType();
+
+    void GetAllAvailableFormats(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, base::OnceCallback<void(base::flat_set<ClipboardFormatType>)> callback) const override {
+        base::flat_set<ClipboardFormatType> formats;
+        formats.insert(ClipboardFormatType::PlainTextType());
+        std::move(callback).Run(std::move(formats));
     }
+
     void Clear(ClipboardBuffer buffer) override {
         std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
-        if(browserviceClipboardText == nullptr) {
-            browserviceClipboardText = new std::string;
-        }
+        ensureBrowserviceClipboardTextLocked();
         browserviceClipboardText->clear();
         ++browserviceClipboardSeqNum;
     }
-    void ReadAvailableTypes(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst, std::vector<std::u16string>* types) const override {
-        if(!types) return;
-        types->clear();
-        *types = GetStandardFormats(buffer, data_dst);
+
+    void ReadAvailableTypes(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, ReadAvailableTypesCallback callback) const override {
+        std::vector<std::u16string> types;
+        types.push_back(kMimeTypePlainText16);
+        std::move(callback).Run(std::move(types));
     }
-    void ReadText(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst, std::u16string* result) const override {
-        if(!result) return;
+
+    void ReadText(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, ReadTextCallback callback) const override {
         std::string text;
         {
             std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
-            if(browserviceClipboardText == nullptr) {
-                browserviceClipboardText = new std::string;
-            }
+            ensureBrowserviceClipboardTextLocked();
             text = *browserviceClipboardText;
         }
-        *result = base::UTF8ToUTF16(text);
+        std::move(callback).Run(base::UTF8ToUTF16(text));
     }
-    void ReadAsciiText(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst, std::string* result) const override {
-        if(!result) return;
-        std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
-        if(browserviceClipboardText == nullptr) {
-            browserviceClipboardText = new std::string;
+
+    void ReadAsciiText(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, ReadAsciiTextCallback callback) const override {
+        std::string text;
+        {
+            std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
+            ensureBrowserviceClipboardTextLocked();
+            text = *browserviceClipboardText;
         }
-        *result = *browserviceClipboardText;
+        std::move(callback).Run(std::move(text));
     }
-    void ReadHTML(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst, std::u16string* markup, std::string* src_url, uint32_t* fragment_start, uint32_t* fragment_end) const override {
-        if(markup) markup->clear();
-        if(src_url) src_url->clear();
-        if(fragment_start) *fragment_start = 0;
-        if(fragment_end) *fragment_end = 0;
+
+    void ReadHTML(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, ReadHtmlCallback callback) const override {
+        std::move(callback).Run(std::u16string(), GURL(), 0u, 0u);
     }
-    void ReadSvg(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst, std::u16string* result) const override {
-        if(result) result->clear();
+
+    void ReadSvg(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, ReadSvgCallback callback) const override {
+        std::move(callback).Run(std::u16string());
     }
-    void ReadRTF(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst, std::string* result) const override {
-        if(result) result->clear();
+
+    void ReadRTF(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, ReadRTFCallback callback) const override {
+        std::move(callback).Run(std::string());
     }
-    void ReadPng(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst, ReadPngCallback callback) const override {
-        std::vector<uint8_t> data;
-        std::move(callback).Run(data);
+
+    void ReadPng(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, ReadPngCallback callback) const override {
+        std::move(callback).Run(std::vector<uint8_t>());
     }
-    void ReadDataTransferCustomData(ClipboardBuffer buffer, const std::u16string& type, const DataTransferEndpoint* data_dst, std::u16string* result) const override {
-        if(result) result->clear();
+
+    void ReadDataTransferCustomData(ClipboardBuffer buffer, const std::u16string& type, const std::optional<DataTransferEndpoint>& data_dst, ReadDataTransferCustomDataCallback callback) const override {
+        std::move(callback).Run(std::u16string());
     }
-    void ReadFilenames(ClipboardBuffer buffer, const DataTransferEndpoint* data_dst, std::vector<ui::FileInfo>* result) const override {
-        if(result) result->clear();
+
+    void ReadFilenames(ClipboardBuffer buffer, const std::optional<DataTransferEndpoint>& data_dst, ReadFilenamesCallback callback) const override {
+        std::move(callback).Run(std::vector<ui::FileInfo>());
     }
-    void ReadBookmark(const DataTransferEndpoint* data_dst, std::u16string* title, std::string* url) const override {
-        if(title) title->clear();
-        if(url) url->clear();
+
+    void ReadURL(const std::optional<DataTransferEndpoint>& data_dst, ReadUrlCallback callback) const override {
+        std::move(callback).Run(ClipboardUrlInfo());
     }
-    void ReadData(const ClipboardFormatType& format, const DataTransferEndpoint* data_dst, std::string* result) const override {
-        if(result) result->clear();
+
+    void ReadData(const ClipboardFormatType& format, const std::optional<DataTransferEndpoint>& data_dst, ReadDataCallback callback) const override {
+        std::move(callback).Run(std::string());
     }
+
     void WritePortableAndPlatformRepresentations(ClipboardBuffer buffer, const ObjectMap& objects, const std::vector<RawData>& raw_objects, std::vector<Clipboard::PlatformRepresentation> platform_representations, std::unique_ptr<DataTransferEndpoint> data_src, uint32_t privacy_types) override {
         {
             std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
-            if(browserviceClipboardText == nullptr) {
-                browserviceClipboardText = new std::string;
-            }
+            ensureBrowserviceClipboardTextLocked();
             browserviceClipboardText->clear();
             ++browserviceClipboardSeqNum;
         }
@@ -325,26 +341,22 @@ private:
             DispatchPortableRepresentation(object.second);
         }
     }
+
     void WriteText(std::string_view text) override {
         std::lock_guard<std::mutex> lock(browserviceClipboardMutex);
-        if(browserviceClipboardText == nullptr) {
-            browserviceClipboardText = new std::string;
-        }
+        ensureBrowserviceClipboardTextLocked();
         browserviceClipboardText->assign(text.begin(), text.end());
         ++browserviceClipboardSeqNum;
     }
+
     void WriteHTML(std::string_view markup, std::optional<std::string_view> source_url) override {}
     void WriteSvg(std::string_view markup) override {}
     void WriteRTF(std::string_view rtf) override {}
     void WriteFilenames(std::vector<ui::FileInfo> filenames) override {}
-    void WriteBookmark(std::string_view title, std::string_view url) override {}
+    void WriteURL(const ClipboardUrlInfo& url_info) override {}
     void WriteWebSmartPaste() override {}
     void WriteBitmap(const SkBitmap& bitmap) override {}
     void WriteData(const ClipboardFormatType& format, base::span<const uint8_t> data) override {}
-
-    void WriteClipboardHistory() {}
-    void WriteUploadCloudClipboard() {}
-    void WriteConfidentialDataForPassword() {}
 
 #ifdef USE_OZONE
     bool IsSelectionBufferAvailable() const override {

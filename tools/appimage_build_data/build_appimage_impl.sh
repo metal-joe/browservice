@@ -81,14 +81,12 @@ msg "Compiling CEF tests"
 U PATH="/opt/cmake-3.22.1-linux-x86_64/bin:$PATH" bash -c "cd cef/releasebuild ; make -j2 ceftests"
 
 msg "Stripping Browservice binaries"
-U strip release/bin/browservice release/bin/retrojsvice.so release/bin/libcef.so release/bin/libEGL.so release/bin/libGLESv2.so release/bin/chrome-sandbox
+U strip release/bin/browservice release/bin/retrojsvice.so release/bin/libcef.so release/bin/chrome-sandbox
 
 msg "Setting RPATH for Browservice binaries"
 U patchelf --set-rpath '.:$ORIGIN:$ORIGIN/../../usr/lib' release/bin/browservice
 U patchelf --set-rpath '$ORIGIN/../../usr/lib' release/bin/retrojsvice.so
 U patchelf --set-rpath '$ORIGIN/../../usr/lib' release/bin/libcef.so
-U patchelf --set-rpath '$ORIGIN/../../usr/lib' release/bin/libEGL.so
-U patchelf --set-rpath '$ORIGIN/../../usr/lib' release/bin/libGLESv2.so
 U patchelf --set-rpath '$ORIGIN/../../usr/lib' release/bin/chrome-sandbox
 
 msg "Collecting library dependencies"
@@ -99,8 +97,6 @@ for f in \
     browservice/release/bin/browservice \
     browservice/release/bin/retrojsvice.so \
     browservice/release/bin/libcef.so \
-    browservice/release/bin/libEGL.so \
-    browservice/release/bin/libGLESv2.so \
     browservice/release/bin/chrome-sandbox \
     browservice/release/bin/libvk_swiftshader.so \
     browservice/release/bin/libvulkan.so.1 \

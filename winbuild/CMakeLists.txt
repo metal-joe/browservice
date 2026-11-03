@@ -14,7 +14,7 @@ target_link_libraries(${CEF_TARGET} libcef_lib libcef_dll_wrapper ${CEF_STANDARD
 ADD_WINDOWS_MANIFEST("${CMAKE_CURRENT_SOURCE_DIR}" "${CEF_TARGET}" "exe")
 COPY_FILES("${CEF_TARGET}" "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "${CEF_TARGET_OUT_DIR}")
 COPY_FILES("${CEF_TARGET}" "${CEF_RESOURCE_FILES}" "${CEF_RESOURCE_DIR}" "${CEF_TARGET_OUT_DIR}")
-target_compile_features(${CEF_TARGET} PRIVATE cxx_std_17)
+target_compile_features(${CEF_TARGET} PRIVATE cxx_std_20)
 target_compile_options(${CEF_TARGET} PRIVATE [=[/I$(_ZVcpkgCurrentInstalledDir)$(VcpkgConfigSubdir)\include\pango-1.0]=])
 target_compile_options(${CEF_TARGET} PRIVATE [=[/I$(_ZVcpkgCurrentInstalledDir)$(VcpkgConfigSubdir)\include\glib-2.0]=])
 target_compile_options(${CEF_TARGET} PRIVATE [=[/I$(_ZVcpkgCurrentInstalledDir)$(VcpkgConfigSubdir)\lib\glib-2.0\include]=])

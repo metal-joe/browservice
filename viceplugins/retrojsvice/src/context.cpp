@@ -211,7 +211,7 @@ variant<shared_ptr<Context>, string> Context::init(
         if(name == "default-quality") {
             string lowValue = value;
             for(char& c : lowValue) {
-                c = tolower(c);
+                c = tolower((unsigned char)c);
             }
             if(lowValue == "png") {
                 defaultQuality = 101;
@@ -244,7 +244,7 @@ variant<shared_ptr<Context>, string> Context::init(
         } else if(name == "quality-selector") {
             string lowValue = value;
             for(char& c : lowValue) {
-                c = tolower(c);
+                c = tolower((unsigned char)c);
             }
             if(trueValues.count(lowValue)) {
                 allowQualitySelector = true;
@@ -256,7 +256,7 @@ variant<shared_ptr<Context>, string> Context::init(
         } else if(name == "navigation-forwarding") {
             string lowValue = value;
             for(char& c : lowValue) {
-                c = tolower(c);
+                c = tolower((unsigned char)c);
             }
             if(trueValues.count(lowValue)) {
                 setupNavigationForwarding = true;

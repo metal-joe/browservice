@@ -7,7 +7,7 @@
 
 namespace browservice {
 
-const char* BrowserviceVersion = "0.9.12.2";
+const char* BrowserviceVersion = "0.9.12.3";
 
 namespace {
 
@@ -191,7 +191,7 @@ string helpLine(string name, string valSpec, string desc, string defaultValStr) 
             linePos = DescStartIndented;
 
             int s = 0;
-            while(s < (int)atom.size() && isspace(atom[s])) {
+            while(s < (int)atom.size() && isspace((unsigned char)atom[s])) {
                 ++s;
             }
             atom = atom.substr(s);
@@ -203,7 +203,7 @@ string helpLine(string name, string valSpec, string desc, string defaultValStr) 
     int a = 0;
     while(a < (int)desc.size()) {
         int b = a + 1;
-        while(b < (int)desc.size() && !isspace(desc[b])) {
+        while(b < (int)desc.size() && !isspace((unsigned char)desc[b])) {
             ++b;
         }
         writeAtom(desc.substr(a, b - a));
@@ -254,8 +254,10 @@ Config::Config(CKey, Src& src)
       #undef CONF_FOREACH_OPT_ITEM
 {}
 
-shared_ptr<Config> Config::read(int argc, const char* const* argv) {
+shared_ptr<Config> Config::read(int argc, const char* const* argv, bool& exitSuccess) {
     REQUIRE(argc >= 1);
+
+    exitSuccess = false;
 
     Src src;
 
@@ -385,6 +387,7 @@ shared_ptr<Config> Config::read(int argc, const char* const* argv) {
             }
         }
 
+        exitSuccess = true;
         return {};
     } else if(mode == Version) {
         cout << "Browservice " << BrowserviceVersion << ", ";
@@ -395,6 +398,7 @@ shared_ptr<Config> Config::read(int argc, const char* const* argv) {
             cout << "Vice plugin " << src.vicePlugin << ": " << version << "\n";
         }
         cout << "For copyright information, use --credits\n";
+        exitSuccess = true;
         return {};
     } else if(mode == Credits) {
         cout << "------------------------\n";
@@ -412,6 +416,7 @@ shared_ptr<Config> Config::read(int argc, const char* const* argv) {
             cout << pluginCredits;
         }
         cout << "\n";
+        exitSuccess = true;
         return {};
     } else {
         REQUIRE(mode == Normal);
@@ -420,7 +425,7 @@ shared_ptr<Config> Config::read(int argc, const char* const* argv) {
     return Config::create(src);
 }
 
-shared_ptr<Config> Config::read(int argc, const wchar_t* const* argv) {
+shared_ptr<Config> Config::read(int argc, const wchar_t* const* argv, bool& exitSuccess) {
     std::vector<std::string> args;
     for (int i = 0; i < argc; ++i) {
         CefString arg = argv[i];
@@ -431,7 +436,7 @@ shared_ptr<Config> Config::read(int argc, const wchar_t* const* argv) {
         argPtrs.push_back(arg.c_str());
     }
     argPtrs.push_back(nullptr);
-    return read(argc, argPtrs.data());
+    return read(argc, argPtrs.data(), exitSuccess);
 }
 
 }

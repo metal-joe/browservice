@@ -147,7 +147,7 @@ public:
         }
 
         for(char& c : scheme) {
-            c = tolower(c);
+            c = tolower((unsigned char)c);
         }
         if(scheme != "basic") {
             return empty;
@@ -340,7 +340,7 @@ struct FormPartHandler : public Poco::Net::PartHandler {
         header.splitParameters(dispStr, dispVal, disp);
 
         for(char& c : dispVal) {
-            c = tolower(c);
+            c = tolower((unsigned char)c);
         }
         if(dispVal != "form-data") {
             return;

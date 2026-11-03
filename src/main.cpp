@@ -219,9 +219,10 @@ int main(int argc, char* argv[]) {
 
     registerTermSignalHandler();
 
-    shared_ptr<Config> config = Config::read(argc, argv);
+    bool exitSuccess = false;
+    shared_ptr<Config> config = Config::read(argc, argv, exitSuccess);
     if(!config) {
-        return 1;
+        return exitSuccess ? 0 : 1;
     }
 
     initBrowserFontRenderMode(config->browserFontRenderMode);

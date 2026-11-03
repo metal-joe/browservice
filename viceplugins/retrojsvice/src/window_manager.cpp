@@ -295,7 +295,7 @@ namespace {
 
 bool hasPNGSupport(string userAgent) {
     for(char& c : userAgent) {
-        c = tolower(c);
+        c = tolower((unsigned char)c);
     }
     return
         userAgent.find("windows 3.1") == string::npos &&

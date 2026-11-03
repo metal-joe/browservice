@@ -64,9 +64,9 @@ def version_test(browservice_path):
         process_funcs["cleanup"]()
         raise
 
-    log(f"Browservice exited, checking exit status (should be 1, TODO fix implementation to 0)")
-    if process.returncode != 1:
-        fail(f"Browservice exit status is {process.returncode} != 1")
+    log(f"Browservice exited, checking exit status (should be 0)")
+    if process.returncode != 0:
+        fail(f"Browservice exit status is {process.returncode} != 0")
 
     log(f"Version test completed successfully")
 

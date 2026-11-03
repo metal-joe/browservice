@@ -15,10 +15,11 @@ private:
 public:
     Config(CKey, Src& src);
 
-    // Returns empty pointer if reading the configuration failed or help/version
-    // was shown and the program should be terminated
-    static shared_ptr<Config> read(int argc, const char* const* argv);
-    static shared_ptr<Config> read(int argc, const wchar_t* const* argv);
+    // Returns empty pointer if reading the configuration failed or help/version/credits
+    // was shown and the program should be terminated. In the latter case exitSuccess is
+    // set to true (the program should exit with status 0); otherwise it is set to false.
+    static shared_ptr<Config> read(int argc, const char* const* argv, bool& exitSuccess);
+    static shared_ptr<Config> read(int argc, const wchar_t* const* argv, bool& exitSuccess);
 
 public:
     const vector<pair<string, string>> viceOpts;
