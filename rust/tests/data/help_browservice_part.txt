@@ -1,0 +1,44 @@
+USAGE: browservice [OPTION]...
+
+Supported options:
+  --block-file-scheme=YES/NO            if enabled, attempts to access local files through the
+                                          file:// URI scheme are blocked (WARNING: there may be ways
+                                          around the block; do NOT allow untrusted users to access
+                                          Browservice) [default: yes]
+  --browser-font-render-mode=MODE       font render mode for the browser area; supported modes:
+                                          'no-antialiasing' for unsmoothed text, 'antialiasing' for
+                                          smoothed text, 'antialiasing-subpixel-X' where X is one of
+                                          'rgb', 'bgr', 'vrgb' and 'vbgr' for smoothed text with
+                                          subpixel rendering, and 'system' for the Chromium default
+                                          for this system [default: antialiasing]
+  --certificate-check-exceptions=DOMAIN,... comma-separated list of domains for which SSL/TLS
+                                          certificate checking is disabled; only exact match is
+                                          considered, e.g. exception for 'example.com' does not
+                                          cover 'www.example.com' [default empty]
+  --chromium-args=NAME(=VAL),...        comma-separated extra arguments to be forwarded to Chromium
+                                          [default empty]
+  --credits                             show copyright information and exit
+  --data-dir=PATH                       absolute path to a directory that will be used to store data
+                                          such as cookies and cache; if empty, the browser runs in
+                                          incognito mode [default empty]
+  --help                                show this help and exit
+  --initial-zoom=FACTOR                 initial zoom factor for new browser windows [default: 1]
+  --show-control-bar=YES/NO             controls whether or not the control bar is shown (disabling
+                                          is useful with e.g. kiosk software) [default: yes]
+  --show-soft-navigation-buttons=YES/NO/AUTO if enabled, navigation buttons
+                                          (Back/Forward/Refresh/Home) are added to the control bar
+                                          in the browser view; in auto mode, enabled unless the vice
+                                          plugin reports to implement navigation buttons
+                                          [default: auto]
+  --start-page=URL                      URL of the initial page for each new window
+                                          [default: about:blank]
+  --use-dedicated-xvfb=YES/NO           if enabled, the browser is run in its own Xvfb X server;
+                                          otherwise, the browser shares the X session of the
+                                          environment [default: yes]
+  --user-agent=STRING                   value for the User-Agent headers sent by the embedded
+                                          browser [default determined by CEF]
+  --version                             show the version and exit
+  --vice-plugin=FILENAME                vice plugin to use for the user interface
+                                          [default: retrojsvice.so]
+  --window-limit=COUNT                  maximum number of browser windows that can be open at the
+                                          same time [default: 32]
