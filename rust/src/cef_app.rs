@@ -1,15 +1,17 @@
-//! Minimal CEF application: subprocess dispatch and a windowless-rendering
-//! initialization/shutdown cycle of the browser process. Corresponds to the
-//! `App` class and the CEF parts of `main` in `src/main.cpp`.
-//!
-//! The server (windows, browser area, vice context) is not ported yet, so the
-//! browser process currently initializes CEF, waits for the global context to
-//! be initialized and then shuts CEF down cleanly.
+//! CEF application: the `App` class and the CEF parts of `main` in
+//! `src/main.cpp`. In the browser process, the server is created when the
+//! CEF context has been initialized and the message loop runs until the
+//! server has shut down (after SIGINT/SIGTERM).
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use cef::sys::{cef_resultcode_t, cef_scheme_options_t};
 use cef::*;
+
+use crate::server::{Server, ServerEventHandler};
+use crate::vice::ViceContext;
 
 /// Configuration needed by the CEF application callbacks in the browser
 /// process. In subprocesses the app is created without it.
@@ -19,11 +21,59 @@ pub struct AppState {
     /// True when the app is used in the browser process after the
     /// configuration has been read (`initialized_` in the C++ App).
     pub initialized: bool,
+    /// Cache path of the request context of the browser windows (empty for
+    /// incognito mode).
+    pub request_context_cache_path: String,
     /// Set when the global request context has been initialized.
     pub context_initialized: bool,
 }
 
 pub type SharedAppState = Arc<Mutex<AppState>>;
+
+// Browser process state that lives on the CEF UI thread (which is the main
+// thread of the program).
+thread_local! {
+    static PENDING_VICE_CTX: RefCell<Option<Rc<ViceContext>>> = const { RefCell::new(None) };
+    static SERVER: RefCell<Option<Rc<Server>>> = const { RefCell::new(None) };
+    static SHUTDOWN_REQUESTED: Cell<bool> = const { Cell::new(false) };
+    static QUIT_MESSAGE_LOOP_CALLED: Cell<bool> = const { Cell::new(false) };
+    static SERVER_EVENT_HANDLER: Rc<AppServerEventHandler> = Rc::new(AppServerEventHandler);
+}
+
+struct AppServerEventHandler;
+
+impl ServerEventHandler for AppServerEventHandler {
+    fn on_server_shutdown_complete(&self) {
+        crate::info_log!("Quitting CEF message loop");
+        QUIT_MESSAGE_LOOP_CALLED.with(|c| c.set(true));
+        quit_message_loop();
+    }
+}
+
+/// Gives the initialized vice plugin context to the app; the server is
+/// started with it once the CEF context is initialized.
+pub fn set_vice_context(ctx: Rc<ViceContext>) {
+    PENDING_VICE_CTX.with(|p| *p.borrow_mut() = Some(ctx));
+}
+
+/// Shuts down the server, or marks the shutdown to happen right after the
+/// server is created (`App::shutdown`).
+fn app_shutdown() {
+    let server = SERVER.with(|s| s.borrow().clone());
+    match server {
+        Some(server) => server.shutdown(),
+        None => SHUTDOWN_REQUESTED.with(|s| s.set(true)),
+    }
+}
+
+/// Polls the termination signal flag every 200 ms (`pollTermSignal`).
+fn poll_term_signal() {
+    if crate::common::term_signal_received() {
+        app_shutdown();
+    } else {
+        crate::ui::post_delayed_task(200, poll_term_signal);
+    }
+}
 
 wrap_app! {
     pub struct BrowserviceApp {
@@ -97,15 +147,37 @@ wrap_browser_process_handler! {
             if !state.initialized {
                 return;
             }
+            crate::ui::require_ui_thread();
             state.context_initialized = true;
+            let cache_path = state.request_context_cache_path.clone();
             drop(state);
 
-            crate::info_log!("CEF context initialized");
-            // The server is not ported yet. Quitting the message loop is
-            // deferred to a task, because this callback may run before the
-            // message loop has started (in which case a quit would be lost).
-            let mut task = PollTask::new(self.state.clone());
-            post_task(ThreadId::UI, Some(&mut task));
+            if SERVER.with(|s| s.borrow().is_some()) {
+                crate::panic_log!("Requirement '!server_' failed");
+            }
+
+            crate::scheme::register_browservice_scheme_handler_factory();
+
+            let settings = RequestContextSettings {
+                cache_path: CefString::from(cache_path.as_str()),
+                ..Default::default()
+            };
+            let Some(request_context) = request_context_create_context(Some(&settings), None)
+            else {
+                crate::panic_log!("Requirement 'requestContext' failed");
+            };
+            crate::scheme::register_browservice_scheme_handler_factory_for(&request_context);
+
+            let Some(vice_ctx) = PENDING_VICE_CTX.with(|p| p.borrow_mut().take()) else {
+                crate::panic_log!("Vice context missing when CEF context was initialized");
+            };
+            let handler = SERVER_EVENT_HANDLER.with(|h| h.clone());
+            let handler: Rc<dyn ServerEventHandler> = handler;
+            let server = Server::create(Rc::downgrade(&handler), vice_ctx, request_context);
+            SERVER.with(|s| *s.borrow_mut() = Some(server.clone()));
+            if SHUTDOWN_REQUESTED.with(|s| s.get()) {
+                server.shutdown();
+            }
         }
 
         fn on_already_running_app_relaunch(
@@ -115,31 +187,6 @@ wrap_browser_process_handler! {
         ) -> ::std::os::raw::c_int {
             // Prevent default action.
             1
-        }
-    }
-}
-
-wrap_task! {
-    struct PollTask {
-        state: SharedAppState,
-    }
-
-    impl Task {
-        fn execute(&self) {
-            // Like pollTermSignal in src/main.cpp, this is re-posted every
-            // 200 ms while running. The phase 1 port has no server to run, so
-            // the loop is quit as soon as the context has been initialized.
-            let context_initialized = self.state.lock().unwrap().context_initialized;
-            if crate::common::term_signal_received() {
-                crate::info_log!("Termination signal received, quitting CEF message loop");
-                quit_message_loop();
-            } else if context_initialized {
-                crate::info_log!("Server not ported yet, quitting CEF message loop");
-                quit_message_loop();
-            } else {
-                let mut task = PollTask::new(self.state.clone());
-                post_delayed_task(ThreadId::UI, Some(&mut task), 200);
-            }
         }
     }
 }
@@ -167,9 +214,9 @@ pub struct InitParams {
     pub cache_path: String,
 }
 
-/// Initializes CEF with windowless rendering, runs the message loop until it
-/// is quit and shuts CEF down. Returns false if initialization failed.
-pub fn run_browser_process(args: &args::Args, app: &mut App, params: &InitParams) -> bool {
+/// Initializes CEF with windowless rendering, runs the message loop until the
+/// server has shut down and shuts CEF down. Panics if initialization fails.
+pub fn run_browser_process(args: &args::Args, app: &mut App, params: &InitParams) {
     let settings = Settings {
         windowless_rendering_enabled: 1,
         command_line_args_disabled: 1,
@@ -194,13 +241,23 @@ pub fn run_browser_process(args: &args::Args, app: &mut App, params: &InitParams
                  concurrent instances."
             );
         }
-        crate::error_log!("Initializing CEF failed");
-        return false;
+        crate::panic_log!("Initializing CEF failed");
     }
 
+    // Re-register termination handlers as CEF initialization may have
+    // interfered with the previous registrations.
     crate::common::register_term_signal_handler();
 
+    crate::ui::post_task(poll_term_signal);
+
     run_message_loop();
+
+    if !QUIT_MESSAGE_LOOP_CALLED.with(|c| c.get()) {
+        crate::panic_log!("Requirement 'cefQuitMessageLoopCalled' failed");
+    }
+
     shutdown();
-    true
+
+    // Like `app = nullptr` after CefShutdown in the C++ version.
+    SERVER.with(|s| s.borrow_mut().take());
 }

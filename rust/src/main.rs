@@ -1,17 +1,18 @@
 //! Browservice entry point (Rust port, work in progress). Mirrors `main` in
-//! `src/main.cpp` up to the point the port has reached: CEF subprocess
-//! dispatch, configuration, vice plugin loading and a CEF windowless
-//! initialization/shutdown cycle. The server is not ported yet.
+//! `src/main.cpp`: CEF subprocess dispatch, configuration, vice plugin
+//! loading and context initialization, CEF initialization with windowless
+//! rendering and the server running in the CEF message loop.
 
 use std::process::ExitCode;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use browservice::browser_font_render_mode::init_browser_font_render_mode;
 use browservice::cef_app::{self, AppState, InitParams};
 use browservice::chromium_patch::USING_TEST_STUB;
-use browservice::globals::{dot_dir_path, ensure_dir_exists};
-use browservice::vice::VicePlugin;
-use browservice::{config, info_log, panic_log, warning_log};
+use browservice::globals::{globals, init_globals};
+use browservice::vice::{ViceContext, VicePlugin};
+use browservice::{config, info_log, warning_log};
 
 fn run() -> i32 {
     cef_app::select_api_version();
@@ -48,13 +49,11 @@ fn run() -> i32 {
         eprintln!("ERROR: Loading vice plugin {} failed", config.vice_plugin);
         return 1;
     };
-    info_log!(
-        "Loaded vice plugin {}: {}",
-        vice_plugin.filename(),
-        vice_plugin.version_string()
-    );
-    // Vice plugin contexts are not ported yet.
-    drop(vice_plugin);
+
+    info_log!("Initializing vice plugin {}", config.vice_plugin);
+    let Some(vice_ctx) = ViceContext::init(Rc::new(vice_plugin), &config.vice_opts) else {
+        return 1;
+    };
 
     #[cfg(not(windows))]
     if config.use_dedicated_xvfb {
@@ -65,53 +64,55 @@ fn run() -> i32 {
         );
     }
 
-    let dot_dir = dot_dir_path();
-    if !ensure_dir_exists(&dot_dir) {
-        panic_log!(
-            "Directory '{}' does not exist and creating it failed",
-            dot_dir
+    if config.show_control_bar {
+        warning_log!(
+            "The control bar is not ported yet; the browser view covers the whole window \
+             (like --show-control-bar=false)"
         );
     }
-    if !config.data_dir.is_empty() && !ensure_dir_exists(&config.data_dir) {
-        panic_log!(
-            "Data directory '{}' does not exist and creating it failed",
-            config.data_dir
-        );
-    }
+
+    let data_dir = config.data_dir.clone();
+    let user_agent = config.user_agent.clone();
+    let chromium_args = config.chromium_args.clone();
+    init_globals(config);
+    let dot_dir = globals().dot_dir_path.clone();
 
     if browservice::common::term_signal_received() {
         return 0;
     }
 
-    let params = if config.data_dir.is_empty() {
+    let (params, request_context_cache_path) = if data_dir.is_empty() {
         // Incognito mode.
         let root_cache_path = format!("{dot_dir}/cef");
-        InitParams {
-            user_agent: config.user_agent.clone(),
-            cache_path: root_cache_path.clone(),
-            root_cache_path,
-        }
+        (
+            InitParams {
+                user_agent,
+                cache_path: root_cache_path.clone(),
+                root_cache_path,
+            },
+            String::new(),
+        )
     } else {
-        InitParams {
-            user_agent: config.user_agent.clone(),
-            root_cache_path: config.data_dir.clone(),
-            cache_path: config.data_dir.clone(),
-        }
+        (
+            InitParams {
+                user_agent,
+                root_cache_path: data_dir.clone(),
+                cache_path: data_dir.clone(),
+            },
+            data_dir,
+        )
     };
 
     {
         let mut state = state.lock().unwrap();
-        state.chromium_args = config.chromium_args.clone();
+        state.chromium_args = chromium_args;
+        state.request_context_cache_path = request_context_cache_path;
         state.initialized = true;
     }
+    cef_app::set_vice_context(vice_ctx);
 
     info_log!("Initializing CEF (windowless rendering)");
-    if !cef_app::run_browser_process(&cef_args, &mut app, &params) {
-        return 1;
-    }
-    if !state.lock().unwrap().context_initialized {
-        panic_log!("CEF message loop exited before the context was initialized");
-    }
+    cef_app::run_browser_process(&cef_args, &mut app, &params);
     info_log!("CEF shut down cleanly");
     0
 }

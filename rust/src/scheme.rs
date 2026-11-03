@@ -159,8 +159,9 @@ wrap_scheme_handler_factory! {
     }
 }
 
-/// Registers the factory for the `browservice` scheme (call in the browser
-/// process after the CEF context has been initialized).
+/// Registers the factory for the `browservice` scheme with the global request
+/// context (call in the browser process after the CEF context has been
+/// initialized), like `CefRegisterSchemeHandlerFactory` in `src/main.cpp`.
 pub fn register_browservice_scheme_handler_factory() {
     let mut factory = BrowserviceSchemeHandlerFactory::new();
     if register_scheme_handler_factory(
@@ -170,5 +171,28 @@ pub fn register_browservice_scheme_handler_factory() {
     ) == 0
     {
         crate::warning_log!("Registering the browservice scheme handler factory failed");
+    }
+}
+
+/// Registers the factory for the `browservice` scheme with `context`.
+///
+/// Deliberate deviation from the C++ version: the C++ code only registers the
+/// factory with the global request context, but the browser windows use a
+/// separate context created with `CefRequestContext::CreateContext`, so with
+/// CEF 156 navigating to `browservice://bookmarks/` fails with
+/// ERR_UNKNOWN_URL_SCHEME in the C++ build (verified with the smoke test in
+/// `tools/rust_port_smoke_test.py`). Registering the factory with the window
+/// context as well makes the bookmark page work.
+pub fn register_browservice_scheme_handler_factory_for(context: &RequestContext) {
+    let mut factory = BrowserviceSchemeHandlerFactory::new();
+    if context.register_scheme_handler_factory(
+        Some(&CefString::from("browservice")),
+        Some(&CefString::from("")),
+        Some(&mut factory),
+    ) == 0
+    {
+        crate::warning_log!(
+            "Registering the browservice scheme handler factory for the request context failed"
+        );
     }
 }
