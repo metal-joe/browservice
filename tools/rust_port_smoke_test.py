@@ -18,9 +18,11 @@ Checks:
      which turns the background green.
   4. Clicking the text field and typing "ab" (KPR events, obfuscated with the
      key cipher of the main page) turns the background yellow.
-  5. Navigating to browservice://bookmarks/ (through the /goto/ path of the
+  5. Clicking a file input and posting a file to the plugin's upload page
+     delivers the file to the page (its onchange handler sees the name).
+  6. Navigating to browservice://bookmarks/ (through the /goto/ path of the
      plugin, i.e. the URINavigation extension) shows the bookmark page.
-  6. Clipboard text set through the plugin's /clipboard/ page is returned
+  7. Clipboard text set through the plugin's /clipboard/ page is returned
      by a later get (copy and paste callbacks of the server).
 Requires Pillow (PIL) for decoding the images.
 """
@@ -41,6 +43,9 @@ PAGE = (
     "onclick=\"document.body.style.background='rgb(0,255,0)'\"></div>"
     "<input id='t' style='position:absolute;left:300px;top:0;width:300px;height:40px' "
     "oninput=\"if(this.value=='ab')document.body.style.background='rgb(255,255,0)'\">"
+    "<input type='file' style='position:absolute;left:0;top:250px;width:300px;height:100px' "
+    "onchange=\"if(this.files.length==1&&this.files[0].name=='up.txt')"
+    "document.body.style.background='rgb(255,0,255)'\">"
     "</body></html>"
 )
 
@@ -207,6 +212,43 @@ def main():
         lambda im: near(px(im, 500, 300), (255, 255, 0)),
         "key presses handled (background yellow)",
         events=(s.key_event(ord("b")),),
+    )
+
+    # File upload: clicking the file input opens the CEF file dialog, which
+    # the server turns into an upload request to the plugin; the file is then
+    # posted to the plugin's upload page.
+    s.image(("MMO_100_300", "MDN_100_300_0", "MUP_100_300_0"))
+    token = None
+    deadline = time.time() + 20
+    while token is None and time.time() < deadline:
+        time.sleep(0.5)
+        s.image()
+        status, ctype, body = get(s.base + s.prefix + "/upload/")
+        m = re.search(rb'name="csrftoken" value="([^"]+)"', body)
+        if m and b'name="file"' in body:
+            token = m.group(1).decode()
+    if token is None:
+        fail("upload mode not entered after clicking the file input")
+    boundary = "----smoketestboundary"
+    parts = []
+    for name, value in (("csrftoken", token), ("mode", "upload"), ("filename", "")):
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n')
+    parts.append(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="up.txt"\r\n'
+        "Content-Type: text/plain\r\n\r\nuploaded content\r\n"
+    )
+    parts.append(f"--{boundary}--\r\n")
+    req = urllib.request.Request(
+        s.base + s.prefix + "/upload/",
+        data="".join(parts).encode(),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        resp.read()
+    wait_for(
+        s,
+        lambda im: near(px(im, 500, 200), (255, 0, 255)),
+        "file upload delivered to the page (background magenta)",
     )
 
     s.goto("browservice://bookmarks/")
