@@ -47,9 +47,10 @@ pub fn ensure_dir_exists(path: &str) -> bool {
 }
 
 /// Global state shared by the whole program (`Globals` in
-/// `src/globals.{hpp,cpp}`, without the text render context, which belongs to
-/// the not yet ported control bar). Set once before CEF is initialized; may be
-/// read from any thread.
+/// `src/globals.{hpp,cpp}`). The text render context is not `Send` and is
+/// kept per thread instead (`text::global_text_render_context`, created by
+/// `main` on the UI thread). Set once before CEF is initialized; may be read
+/// from any thread.
 pub struct Globals {
     pub config: crate::config::Config,
     pub dot_dir_path: String,

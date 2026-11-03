@@ -31,11 +31,18 @@ Checks:
      plugin, i.e. the URINavigation extension) shows the bookmark page.
   7. Clipboard text set through the plugin's /clipboard/ page is returned
      by a later get (copy and paste callbacks of the server).
+  8. (With the control bar.) Navigating to a file served as an attachment
+     by a local HTTP server started by this script (127.0.0.1:18082) shows
+     the "Download (1)" button in the control bar; clicking it accepts the
+     download, and the plugin then offers the file through its iframe and
+     download pages with the original content.
 Requires Pillow (PIL) for decoding the images.
 """
 
 import html
+import http.server
 import io
+import threading
 import re
 import sys
 import time
@@ -207,6 +214,65 @@ def control_bar_shown(im):
     return label > 30 and field_text > 30 and g(200, 5) == (255, 255, 255)
 
 
+DOWNLOAD_CONTENT = b"downloaded content 0123456789\n" * 100
+
+
+class DownloadHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Disposition", 'attachment; filename="smoke.bin"')
+        self.send_header("Content-Length", str(len(DOWNLOAD_CONTENT)))
+        self.end_headers()
+        self.wfile.write(DOWNLOAD_CONTENT)
+
+    def log_message(self, *args):
+        pass
+
+
+def check_download(s):
+    """Accepting a pending download with the download button of the control
+    bar (src/control_bar.cpp: downloadButton_ -> onPendingDownloadAccepted)."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 18082), DownloadHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        s.goto("http://127.0.0.1:18082/smoke.bin")
+
+        def download_button(im):
+            # The button (88 pixels wide, enabled: black text on gray) is
+            # left of the quality selector at the right end of the bar.
+            if px(im, 100, 100 - Y) is None:
+                return False
+            black = sum(1 for x in range(500, 640) for y in range(3, 20)
+                        if im.getpixel((x, y)) == (0, 0, 0))
+            return black > 150
+        wait_for(s, download_button, "download button shown in the control bar")
+        # Find the button: its top-left white frame pixel left of the quality
+        # selector frame (gray 128).
+        img, _, _ = s.image()
+        row = [img.getpixel((x, 1)) for x in range(img.size[0])]
+        start = max(x for x in range(1, 600) if row[x] == (255, 255, 255) and row[x - 1] == (192, 192, 192))
+        bx, by = start + 44, 10
+        s.image((f"MMO_{bx}_{by - Y}", f"MDN_{bx}_{by - Y}_0", f"MUP_{bx}_{by - Y}_0"))
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            s.image()
+            status, ctype, body = get(f"{s.base}{s.prefix}/iframe/{s.main_idx}/{int(time.time())}/")
+            m = re.search(rb'window\.location\.href = "([^"]+)"', body)
+            if m:
+                path = m.group(1).decode()
+                status, ctype, data = get(s.base + path)
+                if status != 200 or data != DOWNLOAD_CONTENT:
+                    fail(f"downloaded file differs ({status}, {len(data)} bytes)")
+                print(f"OK: download accepted from the control bar and served by the "
+                      f"plugin ({path}, {len(data)} bytes)")
+                return
+            time.sleep(0.5)
+        fail("download not offered by the plugin after clicking the download button")
+    finally:
+        server.shutdown()
+
+
 def main():
     global Y
     if len(sys.argv) == 2 and sys.argv[1] == "--print-start-page":
@@ -303,6 +369,8 @@ def main():
         return near(px(im, 500, 300), (255, 255, 255)) and dark > 200
     wait_for(s, bookmarks_shown, "browservice://bookmarks/ page (white page with heading text)")
     check_clipboard(s.base)
+    if Y:
+        check_download(s)
     print("ALL CHECKS PASSED")
 
 
