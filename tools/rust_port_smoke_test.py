@@ -20,9 +20,12 @@ Checks:
      key cipher of the main page) turns the background yellow.
   5. Navigating to browservice://bookmarks/ (through the /goto/ path of the
      plugin, i.e. the URINavigation extension) shows the bookmark page.
+  6. Clipboard text set through the plugin's /clipboard/ page is returned
+     by a later get (copy and paste callbacks of the server).
 Requires Pillow (PIL) for decoding the images.
 """
 
+import html
 import io
 import re
 import sys
@@ -146,6 +149,29 @@ def wait_for(s, pred, what, events=(), timeout=20.0):
     return img
 
 
+def check_clipboard(base):
+    """Clipboard through the plugin's /clipboard/ page: 'set' calls the
+    copyToClipboard callback, 'get' calls requestClipboardContent and waits
+    for putClipboardContent."""
+    status, ctype, body = get(base + "/clipboard/")
+    m = re.search(rb'name="csrftoken" value="([^"]+)"', body)
+    if status != 200 or not m:
+        fail("clipboard page or its CSRF token not found")
+    token = m.group(1).decode()
+    text = "smoke clipboard \u00e4"
+
+    def post(fields):
+        data = urllib.parse.urlencode(fields).encode()
+        with urllib.request.urlopen(base + "/clipboard/", data=data, timeout=20) as resp:
+            return resp.read().decode()
+
+    post({"csrftoken": token, "mode": "set", "text": text})
+    page = post({"csrftoken": token, "mode": "get"})
+    if text not in html.unescape(page):
+        fail("clipboard text did not round-trip: " + page[:300])
+    print("OK: clipboard set/get round trip through the server")
+
+
 def main():
     if len(sys.argv) == 2 and sys.argv[1] == "--print-start-page":
         print(start_page())
@@ -193,6 +219,7 @@ def main():
         )
         return near(px(im, 500, 300), (255, 255, 255)) and dark > 20
     wait_for(s, bookmarks_shown, "browservice://bookmarks/ page (white page with heading text)")
+    check_clipboard(s.base)
     print("ALL CHECKS PASSED")
 
 

@@ -315,3 +315,25 @@ wrap_download_handler! {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completed_download_deletes_file_and_temp_dir() {
+        let temp_dir = Arc::new(TempDir::create());
+        let dir_path = temp_dir.path().to_string();
+        let path = format!("{dir_path}/file_1.bin");
+        std::fs::write(&path, b"data").unwrap();
+
+        let file = Arc::new(CompletedDownload::new(temp_dir, path.clone(), "a.txt".into()));
+        assert_eq!(file.name(), "a.txt");
+        // The plugin may release its reference from another thread.
+        let handle = std::thread::spawn(move || drop(file));
+        handle.join().unwrap();
+
+        assert!(!std::path::Path::new(&path).exists());
+        assert!(!std::path::Path::new(&dir_path).exists());
+    }
+}
