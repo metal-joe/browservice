@@ -45,3 +45,53 @@ pub fn ensure_dir_exists(path: &str) -> bool {
         Err(_) => false,
     }
 }
+
+/// Global state shared by the whole program (`Globals` in
+/// `src/globals.{hpp,cpp}`, without the text render context, which belongs to
+/// the not yet ported control bar). Set once before CEF is initialized; may be
+/// read from any thread.
+pub struct Globals {
+    pub config: crate::config::Config,
+    pub dot_dir_path: String,
+}
+
+static GLOBALS: std::sync::OnceLock<Globals> = std::sync::OnceLock::new();
+
+/// Initializes the globals, panicking if the dot directory or the data
+/// directory cannot be created (like the C++ `Globals` constructor).
+pub fn init_globals(config: crate::config::Config) {
+    let dot_dir_path = dot_dir_path();
+    if !ensure_dir_exists(&dot_dir_path) {
+        crate::panic_log!(
+            "Directory '{}' does not exist and creating it failed",
+            dot_dir_path
+        );
+    }
+    if !config.data_dir.is_empty() && !ensure_dir_exists(&config.data_dir) {
+        crate::panic_log!(
+            "Data directory '{}' does not exist and creating it failed",
+            config.data_dir
+        );
+    }
+    if GLOBALS
+        .set(Globals {
+            config,
+            dot_dir_path,
+        })
+        .is_err()
+    {
+        crate::panic_log!("Globals initialized twice");
+    }
+}
+
+pub fn globals() -> &'static Globals {
+    match GLOBALS.get() {
+        Some(g) => g,
+        None => crate::panic_log!("Globals used before initialization"),
+    }
+}
+
+/// For unit tests: the globals if they have been initialized.
+pub fn try_globals() -> Option<&'static Globals> {
+    GLOBALS.get()
+}
