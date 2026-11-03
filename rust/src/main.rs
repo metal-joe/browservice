@@ -75,6 +75,9 @@ fn run() -> i32 {
     let user_agent = config.user_agent.clone();
     let chromium_args = config.chromium_args.clone();
     init_globals(config);
+    // Like the C++ Globals constructor: create the text render context (it
+    // sets FREETYPE_PROPERTIES temporarily) before CEF is initialized.
+    let _text_render_context = browservice::text::global_text_render_context();
     let dot_dir = globals().dot_dir_path.clone();
 
     if browservice::common::term_signal_received() {

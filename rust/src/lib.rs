@@ -16,6 +16,7 @@ pub mod key;
 pub mod scheme;
 pub mod sha3;
 pub mod temp_dir;
+pub mod text;
 pub mod timeout;
 pub mod ui;
 pub mod vice;

@@ -49,6 +49,22 @@ Phase 2:
 | `rust/src/globals.rs` | `src/globals.{hpp,cpp}` | Configuration and dot directory, readable from any thread (the text render context belongs to the control bar port). |
 | `rust/src/cef_app.rs`, `rust/src/main.rs` | `App` and `main` in `src/main.cpp` | Plugin load and context init before CEF, `CefInitialize`, scheme handler factory, request context (incognito or `--data-dir`), server creation in `OnContextInitialized`, 200 ms termination signal polling, shutdown before quitting the message loop, `CefShutdown`. |
 
+Phase 3 (control bar and text rendering):
+
+| Rust module | C++ origin | Status |
+|---|---|---|
+| `rust/src/text.rs` | `src/text.{hpp,cpp}` | Complete: `TextRenderContext` (PangoFT2 font map with the same fontconfig substitutions, 72 DPI, `Verdana 11`, `en-US`, LTR, `FREETYPE_PROPERTIES=truetype:interpreter-version=35` while the font map is created), `TextLayout` (extents, x/index conversion, visual cursor movement, graymap rendering with the 128 threshold) and `OverflowTextLayout`. The global context is created in `main` at the same point as the C++ `Globals` constructor. |
+
+Text rendering library choice: the Pango, PangoFT2, GObject and fontconfig
+functions are declared by hand in `rust/src/text.rs` (module `ffi`, about 25
+functions) and linked through `pkg-config --libs pangoft2 fontconfig` in
+`rust/build.rs`, i.e. the same system libraries as the C++ build
+(`pkg-config --libs pangoft2` in the Makefile). The gtk-rs `pango` crate
+does not cover the PangoFT2 backend (there is no maintained `pangoft2`
+crate), and rendering through `pangocairo` would rasterize differently from
+`pango_ft2_render_layout`. Build requirement: the `pangoft2` development
+files (`libpango1.0-dev` on Debian/Ubuntu) and `pkg-config`.
+
 ### Design notes
 
 - All browser state lives on the CEF UI thread (`Rc`, `Cell`, `RefCell`).
