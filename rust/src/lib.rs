@@ -32,3 +32,5 @@ pub mod root_widget;
 pub mod server;
 pub mod widget;
 pub mod window;
+#[cfg(not(windows))]
+pub mod xvfb;

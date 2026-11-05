@@ -55,14 +55,16 @@ fn run() -> i32 {
         return 1;
     };
 
+    // Dropped (shutting the X server down) when `run` returns, after CEF has
+    // been shut down, like `xvfb.reset()` at the end of the C++ main.
     #[cfg(not(windows))]
-    if config.use_dedicated_xvfb {
-        warning_log!(
-            "Dedicated Xvfb is not ported yet; using the X session of the environment \
-             (DISPLAY={})",
-            std::env::var("DISPLAY").unwrap_or_default()
-        );
-    }
+    let _xvfb = if config.use_dedicated_xvfb {
+        let xvfb = browservice::xvfb::Xvfb::create();
+        xvfb.setup_env();
+        Some(xvfb)
+    } else {
+        None
+    };
 
     let data_dir = config.data_dir.clone();
     let user_agent = config.user_agent.clone();
