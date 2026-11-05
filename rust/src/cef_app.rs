@@ -244,6 +244,8 @@ pub fn run_browser_process(args: &args::Args, app: &mut App, params: &InitParams
         crate::panic_log!("Initializing CEF failed");
     }
 
+    crate::common::enable_panic_using_cef_fatal_error();
+
     // Re-register termination handlers as CEF initialization may have
     // interfered with the previous registrations.
     crate::common::register_term_signal_handler();

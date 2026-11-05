@@ -15,6 +15,8 @@ use browservice::vice::{ViceContext, VicePlugin};
 use browservice::{config, info_log, warning_log};
 
 fn run() -> i32 {
+    browservice::common::install_panic_hook();
+
     cef_app::select_api_version();
 
     let cef_args = cef::args::Args::new();

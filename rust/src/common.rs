@@ -2,6 +2,7 @@
 //! original `src/common.hpp`.
 
 use std::io::Write;
+use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Writes a log message in the format `SEVERITY @ LOCATION -- MSG` to stderr.
@@ -10,7 +11,9 @@ pub fn write_log(severity: &str, location: &str, msg: &str) {
     let _ = std::io::stderr().write_all(line.as_bytes());
 }
 
-/// Ends the program after writing `PANIC @ LOCATION: MSG` to stderr.
+/// Ends the program after writing `PANIC @ LOCATION: MSG` to stderr
+/// (`Panicker::panic_` in `src/common.cpp`): with `abort()`, or through CEF's
+/// `LOG(FATAL)` once [`enable_panic_using_cef_fatal_error`] has been called.
 pub fn panic_at(location: &str, msg: &str) -> ! {
     let mut line = format!("PANIC @ {location}");
     if !msg.is_empty() {
@@ -21,7 +24,57 @@ pub fn panic_at(location: &str, msg: &str) -> ! {
     let mut stderr = std::io::stderr();
     let _ = stderr.write_all(line.as_bytes());
     let _ = stderr.flush();
+
+    if PANIC_USING_CEF_FATAL_ERROR.load(Ordering::SeqCst) {
+        // LOG(FATAL) in the C++ code: CEF writes a FATAL log message and
+        // crashes the process.
+        unsafe {
+            cef_log(c"rust/src/common.rs".as_ptr(), line!() as c_int, LOG_FATAL, c"".as_ptr());
+        }
+    }
+
     std::process::abort();
+}
+
+// Declared in `include/internal/cef_logging_internal.h` and exported by
+// libcef; not part of the generated bindings.
+unsafe extern "C" {
+    fn cef_log(file: *const c_char, line: c_int, severity: c_int, message: *const c_char);
+}
+
+/// `cef::logging::LOG_FATAL` in `include/base/cef_logging.h` (the severity
+/// that the `LOG(FATAL)` macro passes to `cef_log`).
+const LOG_FATAL: c_int = 3;
+
+static PANIC_USING_CEF_FATAL_ERROR: AtomicBool = AtomicBool::new(false);
+
+/// After this call, panics end the program through CEF's fatal error
+/// handling (`LOG(FATAL)`) instead of `abort()`, like
+/// `enablePanicUsingCEFFatalError` in the C++ code. Should only be called
+/// after CEF has been initialized successfully.
+pub fn enable_panic_using_cef_fatal_error() {
+    PANIC_USING_CEF_FATAL_ERROR.store(true, Ordering::SeqCst);
+}
+
+/// Routes Rust panics (failed `assert!`, `unwrap`, `expect`, ...) to
+/// [`panic_at`], so that they are reported in the same `PANIC @ LOCATION: MSG`
+/// format and end the program the same way as failed `REQUIRE` checks.
+pub fn install_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let location = match info.location() {
+            Some(loc) => format!("{}:{}", loc.file(), loc.line()),
+            None => "unknown location".to_string(),
+        };
+        let payload = info.payload();
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            String::new()
+        };
+        panic_at(&location, &msg);
+    }));
 }
 
 #[macro_export]
@@ -187,6 +240,33 @@ pub fn random_u64() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run in a child process by `panic_hook_reports_like_panic_macro`.
+    #[test]
+    fn panic_hook_child() {
+        if std::env::var_os("BROWSERVICE_PANIC_HOOK_CHILD").is_none() {
+            return;
+        }
+        install_panic_hook();
+        let v: Option<u32> = None;
+        v.expect("value missing");
+    }
+
+    #[test]
+    fn panic_hook_reports_like_panic_macro() {
+        use std::os::unix::process::ExitStatusExt;
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "common::tests::panic_hook_child", "--nocapture", "--test-threads=1"])
+            .env("BROWSERVICE_PANIC_HOOK_CHILD", "1")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("PANIC @ rust/src/common.rs:") && stderr.contains(": value missing\n"),
+            "unexpected stderr: {stderr}"
+        );
+        assert_eq!(output.status.signal(), Some(libc::SIGABRT));
+    }
 
     #[test]
     fn sanitize() {
