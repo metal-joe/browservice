@@ -233,12 +233,14 @@ fn jump_utf8_chars(s: &[u8], mut idx: usize, mut count: i32) -> usize {
 /// restores the previous value when dropped (`FreeType2SetEnv`). FreeType only
 /// reads the TrueType interpreter version from this environment variable when
 /// the library is initialized by the PangoFT2 font map.
+#[cfg(not(windows))]
 struct FreeType2SetEnv {
     old_value: Option<std::ffi::OsString>,
 }
 
 const FREETYPE_PROPERTIES: &str = "FREETYPE_PROPERTIES";
 
+#[cfg(not(windows))]
 impl FreeType2SetEnv {
     fn new() -> FreeType2SetEnv {
         let old_value = std::env::var_os(FREETYPE_PROPERTIES);
@@ -250,6 +252,7 @@ impl FreeType2SetEnv {
     }
 }
 
+#[cfg(not(windows))]
 impl Drop for FreeType2SetEnv {
     fn drop(&mut self) {
         // SAFETY: see FreeType2SetEnv::new.
@@ -258,6 +261,51 @@ impl Drop for FreeType2SetEnv {
                 Some(v) => std::env::set_var(FREETYPE_PROPERTIES, v),
                 None => std::env::remove_var(FREETYPE_PROPERTIES),
             }
+        }
+    }
+}
+
+// On Windows, FreeType reads the variable with the C runtime's `getenv`,
+// which does not see changes made with `SetEnvironmentVariableW` (used by
+// `std::env::set_var`), so the C runtime functions are used as in C++
+// (`_putenv_s`; setting an empty value removes the variable).
+#[cfg(windows)]
+unsafe extern "C" {
+    fn getenv(name: *const c_char) -> *const c_char;
+    fn _putenv_s(name: *const c_char, value: *const c_char) -> c_int;
+}
+
+#[cfg(windows)]
+struct FreeType2SetEnv {
+    old_value: Option<std::ffi::CString>,
+}
+
+#[cfg(windows)]
+impl FreeType2SetEnv {
+    fn new() -> FreeType2SetEnv {
+        let _ = FREETYPE_PROPERTIES;
+        unsafe {
+            let old = getenv(c"FREETYPE_PROPERTIES".as_ptr());
+            let old_value = (!old.is_null()).then(|| CStr::from_ptr(old).to_owned());
+            if _putenv_s(c"FREETYPE_PROPERTIES".as_ptr(), c"truetype:interpreter-version=35".as_ptr()) != 0 {
+                crate::panic_log!(
+                    "Requirement '!_putenv_s(\"FREETYPE_PROPERTIES\", \"truetype:interpreter-version=35\")' failed"
+                );
+            }
+            FreeType2SetEnv { old_value }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for FreeType2SetEnv {
+    fn drop(&mut self) {
+        let value = match &self.old_value {
+            Some(v) => v.as_ptr(),
+            None => c"".as_ptr(),
+        };
+        if unsafe { _putenv_s(c"FREETYPE_PROPERTIES".as_ptr(), value) } != 0 {
+            crate::panic_log!("Requirement '!_putenv_s(\"FREETYPE_PROPERTIES\", ...)' failed");
         }
     }
 }

@@ -31,7 +31,10 @@ fn run() -> i32 {
 
     browservice::common::register_term_signal_handler();
 
-    let args: Vec<String> = std::env::args().collect();
+    let Some(args) = browservice::common::command_line_args() else {
+        eprintln!("ERROR: Reading command line failed");
+        return 1;
+    };
     let config = match config::read(&args) {
         Ok(config) => config,
         Err(code) => return code,
@@ -87,7 +90,7 @@ fn run() -> i32 {
 
     let (params, request_context_cache_path) = if data_dir.is_empty() {
         // Incognito mode.
-        let root_cache_path = format!("{dot_dir}/cef");
+        let root_cache_path = format!("{dot_dir}{}cef", browservice::common::PATH_SEP);
         (
             InitParams {
                 user_agent,

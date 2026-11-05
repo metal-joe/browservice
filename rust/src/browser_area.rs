@@ -55,7 +55,13 @@ pub fn create_key_event(key: i32, event_modifiers: u32) -> KeyEvent {
 
     if let Some((win, native)) = key_codes(key) {
         event.windows_key_code = win;
-        event.native_key_code = native;
+        // The native (X11 keycode) value is only used on Linux, as in C++.
+        #[cfg(not(windows))]
+        {
+            event.native_key_code = native;
+        }
+        #[cfg(windows)]
+        let _ = native;
     }
 
     if key < 0 {
@@ -405,8 +411,20 @@ impl Widget for BrowserArea {
                 let mut event = create_key_event(key, self.event_modifiers.get());
                 event.type_ = KeyEventType::RAWKEYDOWN;
                 host.send_key_event(Some(&event));
-                event.type_ = KeyEventType::CHAR;
-                host.send_key_event(Some(&event));
+                // On Windows, the CHAR event carries the character as its
+                // key code and is only sent for keys with a character.
+                #[cfg(windows)]
+                if event.character != 0 {
+                    let mut char_event = event.clone();
+                    char_event.type_ = KeyEventType::CHAR;
+                    char_event.windows_key_code = char_event.character as i32;
+                    host.send_key_event(Some(&char_event));
+                }
+                #[cfg(not(windows))]
+                {
+                    event.type_ = KeyEventType::CHAR;
+                    host.send_key_event(Some(&event));
+                }
             }
         }
         self.event_modifiers.set(self.event_modifiers.get() | key_modifier_flag(key));
@@ -444,7 +462,10 @@ mod tests {
     #[test]
     fn key_events() {
         let e = create_key_event('a' as i32, 0);
+        #[cfg(not(windows))]
         assert_eq!((e.windows_key_code, e.native_key_code), (65, 38));
+        #[cfg(windows)]
+        assert_eq!((e.windows_key_code, e.native_key_code), (65, 0));
         assert_eq!((e.character, e.unmodified_character), (97, 97));
         assert_eq!(e.is_system_key, 0);
 
@@ -460,6 +481,9 @@ mod tests {
         assert_eq!(e.modifiers, EVENTFLAG_CONTROL_DOWN | EVENTFLAG_ALT_DOWN);
 
         let e = create_key_event(keys::LEFT, EVENTFLAG_SHIFT_DOWN);
+        #[cfg(not(windows))]
         assert_eq!((e.windows_key_code, e.native_key_code, e.character), (37, 113, 0));
+        #[cfg(windows)]
+        assert_eq!((e.windows_key_code, e.native_key_code, e.character), (37, 0, 0));
     }
 }

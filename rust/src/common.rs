@@ -111,8 +111,12 @@ macro_rules! panic_log {
     };
 }
 
+/// Path separator used when building paths (`PathSep` in `src/common.hpp`).
+pub const PATH_SEP: char = if cfg!(windows) { '\\' } else { '/' };
+
 static TERM_SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(unix)]
 extern "C" fn handle_term_signal(signal_id: libc::c_int) {
     // Only async-signal-safe operations are allowed here, so the message is
     // written with a single write(2) call without allocating.
@@ -124,14 +128,71 @@ extern "C" fn handle_term_signal(signal_id: libc::c_int) {
     TERM_SIGNAL_RECEIVED.store(true, Ordering::SeqCst);
 }
 
-/// Registers handlers for SIGINT and SIGTERM that set a flag polled by the
-/// main loop (see `src/main.cpp`).
+/// Console control handler (Ctrl+C, Ctrl+Break, console close, logoff,
+/// shutdown) of the Windows build (`handleTermSignal` in `src/main.cpp`).
+#[cfg(windows)]
+unsafe extern "system" fn handle_term_signal(ctrl_type: u32) -> windows_sys::core::BOOL {
+    crate::info_log!("Got control signal {}, initiating shutdown", ctrl_type);
+    TERM_SIGNAL_RECEIVED.store(true, Ordering::SeqCst);
+    1
+}
+
+/// Registers handlers for SIGINT and SIGTERM (on Windows, a console control
+/// handler) that set a flag polled by the main loop (see `src/main.cpp`).
 pub fn register_term_signal_handler() {
     #[cfg(unix)]
     unsafe {
         let handler = handle_term_signal as extern "C" fn(libc::c_int) as libc::sighandler_t;
         libc::signal(libc::SIGINT, handler);
         libc::signal(libc::SIGTERM, handler);
+    }
+    #[cfg(windows)]
+    {
+        let ok = unsafe {
+            windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(handle_term_signal), 1)
+        };
+        if ok == 0 {
+            crate::panic_log!("Requirement 'SetConsoleCtrlHandler(handleTermSignal, TRUE)' failed");
+        }
+    }
+}
+
+/// The command line arguments of the program. On Windows they are read from
+/// the wide-character command line with `GetCommandLineW` and
+/// `CommandLineToArgvW` and converted to UTF-8, like `RunConsoleMain` and
+/// `Config::read(int, const wchar_t* const*, bool&)` in the C++ code. Returns
+/// None if the command line cannot be read.
+pub fn command_line_args() -> Option<Vec<String>> {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::Foundation::LocalFree;
+        use windows_sys::Win32::System::Environment::GetCommandLineW;
+        use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
+
+        let command_line = GetCommandLineW();
+        if command_line.is_null() {
+            return None;
+        }
+        let mut argc: i32 = 0;
+        let argv = CommandLineToArgvW(command_line, &mut argc);
+        if argv.is_null() {
+            return None;
+        }
+        let mut args = Vec::with_capacity(argc.max(0) as usize);
+        for i in 0..argc.max(0) as usize {
+            let arg = *argv.add(i);
+            let mut len = 0;
+            while *arg.add(len) != 0 {
+                len += 1;
+            }
+            args.push(String::from_utf16_lossy(std::slice::from_raw_parts(arg, len)));
+        }
+        LocalFree(argv.cast());
+        Some(args)
+    }
+    #[cfg(not(windows))]
+    {
+        Some(std::env::args().collect())
     }
 }
 
@@ -211,6 +272,28 @@ pub fn sanitize_utf8_string_to_code_points(s: &[u8]) -> Vec<u32> {
 }
 
 /// Fills `buf` with random bytes from the operating system.
+#[cfg(windows)]
+pub fn random_bytes(buf: &mut [u8]) {
+    use windows_sys::Win32::Security::Cryptography::{
+        BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom,
+    };
+    for chunk in buf.chunks_mut(u32::MAX as usize) {
+        let status = unsafe {
+            BCryptGenRandom(
+                std::ptr::null_mut(),
+                chunk.as_mut_ptr(),
+                chunk.len() as u32,
+                BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+            )
+        };
+        if status != 0 {
+            crate::panic_log!("Reading random bytes failed");
+        }
+    }
+}
+
+/// Fills `buf` with random bytes from the operating system.
+#[cfg(not(windows))]
 pub fn random_bytes(buf: &mut [u8]) {
     let mut filled = 0;
     while filled < buf.len() {
@@ -252,6 +335,7 @@ mod tests {
         v.expect("value missing");
     }
 
+    #[cfg(unix)]
     #[test]
     fn panic_hook_reports_like_panic_macro() {
         use std::os::unix::process::ExitStatusExt;

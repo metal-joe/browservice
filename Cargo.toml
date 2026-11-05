@@ -35,5 +35,16 @@ cef = { version = "=156.3.0", default-features = false }
 libc = "0.2"
 libloading = "0.8"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_Console",
+    "Win32_System_Environment",
+    "Win32_UI_Shell",
+] }
+
 [profile.release]
 debug = false

@@ -73,8 +73,39 @@ enum LoadError {
     Format,
 }
 
+/// Moves `tmp_path` over `path`: `rename(2)`, on Windows `MoveFileW` if
+/// `path` does not exist and `ReplaceFileW` otherwise (as in C++).
+#[cfg(not(windows))]
+fn replace_file(tmp_path: &str, path: &str) -> bool {
+    std::fs::rename(tmp_path, path).is_ok()
+}
+
+#[cfg(windows)]
+fn replace_file(tmp_path: &str, path: &str) -> bool {
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileW, REPLACEFILE_IGNORE_ACL_ERRORS, REPLACEFILE_IGNORE_MERGE_ERRORS, ReplaceFileW,
+    };
+    let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+    let tmp_w = wide(tmp_path);
+    let path_w = wide(path);
+    unsafe {
+        if !std::path::Path::new(path).exists() {
+            MoveFileW(tmp_w.as_ptr(), path_w.as_ptr()) != 0
+        } else {
+            ReplaceFileW(
+                path_w.as_ptr(),
+                tmp_w.as_ptr(),
+                std::ptr::null(),
+                REPLACEFILE_IGNORE_MERGE_ERRORS | REPLACEFILE_IGNORE_ACL_ERRORS,
+                std::ptr::null(),
+                std::ptr::null(),
+            ) != 0
+        }
+    }
+}
+
 fn bookmark_path(dot_dir: &str) -> String {
-    format!("{dot_dir}/bookmarks")
+    format!("{dot_dir}{}bookmarks", crate::common::PATH_SEP)
 }
 
 impl Bookmarks {
@@ -162,7 +193,7 @@ impl Bookmarks {
     pub fn save_to(&self, dot_dir: &str) -> bool {
         let path = bookmark_path(dot_dir);
         const PALETTE: &[u8] = b"abcdefghijklmnopqrstuvABCDEFGHIJKLMNOPQRSTUV0123456789";
-        let mut tmp_path = format!("{dot_dir}/.tmp.bookmarks.");
+        let mut tmp_path = format!("{dot_dir}{}.tmp.bookmarks.", crate::common::PATH_SEP);
         for _ in 0..16 {
             let idx = (crate::common::random_u64() % PALETTE.len() as u64) as usize;
             tmp_path.push(PALETTE[idx] as char);
@@ -190,12 +221,13 @@ impl Bookmarks {
             return false;
         }
 
-        if std::fs::rename(&tmp_path, &path).is_err() {
+        if !replace_file(&tmp_path, &path) {
             crate::error_log!(
                 "Saving bookmarks failed: Renaming temporary file '{}' to '{}' failed",
                 tmp_path,
                 path
             );
+            #[cfg(not(windows))]
             let _ = std::fs::remove_file(&tmp_path);
             return false;
         }

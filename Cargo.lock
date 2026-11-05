@@ -98,6 +98,7 @@ dependencies = [
  "cef",
  "libc",
  "libloading 0.8.9",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

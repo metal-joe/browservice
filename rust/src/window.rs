@@ -18,6 +18,12 @@ use std::sync::Arc;
 
 use cef::*;
 
+/// The native event type passed to `on_pre_key_event` (`CefEventHandle`).
+#[cfg(not(windows))]
+type OsEvent = sys::XEvent;
+#[cfg(windows)]
+type OsEvent = sys::MSG;
+
 use crate::browser_area::{BrowserArea, BrowserAreaEventHandler, EVENTFLAG_SHIFT_DOWN};
 use crate::data_url::{
     create_signed_data_url, generate_data_url_sign_key, read_signed_data_url, userfree_to_string,
@@ -266,7 +272,7 @@ impl Window {
         );
         let mut client = WindowClient::create(handle);
 
-        let window_info = WindowInfo::default().set_as_windowless(0);
+        let window_info = WindowInfo::default().set_as_windowless(Default::default());
         let browser_settings = BrowserSettings {
             background_color: 0xFFFFFFFF,
             ..Default::default()
@@ -640,7 +646,7 @@ impl Window {
                 self.show_soft_navigation_buttons,
             );
             if let Some(info) = window_info.as_deref_mut() {
-                *info = info.clone().set_as_windowless(0);
+                *info = info.clone().set_as_windowless(Default::default());
             }
             if let Some(settings) = settings.as_deref_mut() {
                 settings.background_color = 0xFFFFFFFF;
@@ -1211,7 +1217,7 @@ wrap_display_handler! {
         fn on_cursor_change(
             &self,
             browser: Option<&mut Browser>,
-            _cursor: ::std::os::raw::c_ulong,
+            _cursor: sys::cef_cursor_handle_t,
             type_: CursorType,
             _custom_cursor_info: Option<&CursorInfo>,
         ) -> ::std::os::raw::c_int {
@@ -1318,7 +1324,7 @@ wrap_keyboard_handler! {
             &self,
             browser: Option<&mut Browser>,
             event: Option<&KeyEvent>,
-            _os_event: Option<&mut sys::XEvent>,
+            _os_event: Option<&mut OsEvent>,
             _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
             match (checked_window(self.handle, browser), event) {

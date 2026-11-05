@@ -542,15 +542,32 @@ impl ViceFileUpload {
         src_cleanup: Box<dyn FnOnce()>,
     ) -> Rc<ViceFileUpload> {
         let name = sanitize_filename(name);
-        let link_dir = format!("{}/{}", temp_dir.path(), upload_idx);
-        let link_path = format!("{link_dir}/{name}");
+        let sep = crate::common::PATH_SEP;
+        let link_dir = format!("{}{sep}{}", temp_dir.path(), upload_idx);
+        let link_path = format!("{link_dir}{sep}{name}");
 
-        use std::os::unix::fs::DirBuilderExt;
-        if std::fs::DirBuilder::new().mode(0o777).create(&link_dir).is_err() {
-            crate::panic_log!("Requirement 'mkdir(linkDir_.c_str(), 0777) == 0' failed");
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            if std::fs::DirBuilder::new().mode(0o777).create(&link_dir).is_err() {
+                crate::panic_log!("Requirement 'mkdir(linkDir_.c_str(), 0777) == 0' failed");
+            }
+            if std::os::unix::fs::symlink(src_path, &link_path).is_err() {
+                crate::panic_log!(
+                    "Requirement 'symlink(srcPath_.c_str(), linkPath_.c_str()) == 0' failed"
+                );
+            }
         }
-        if std::os::unix::fs::symlink(src_path, &link_path).is_err() {
-            crate::panic_log!("Requirement 'symlink(srcPath_.c_str(), linkPath_.c_str()) == 0' failed");
+        #[cfg(windows)]
+        {
+            if std::fs::create_dir(&link_dir).is_err() {
+                crate::panic_log!("Requirement 'CreateDirectoryW(linkDir_.c_str(), nullptr)' failed");
+            }
+            // On Windows, symbolic links require special permissions, so we
+            // just copy the file
+            if std::fs::copy(src_path, &link_path).is_err() {
+                crate::panic_log!("Copying uploaded file '{}' to '{}' failed", src_path, link_path);
+            }
         }
 
         Rc::new(ViceFileUpload {
@@ -569,7 +586,10 @@ impl ViceFileUpload {
 impl Drop for ViceFileUpload {
     fn drop(&mut self) {
         if std::fs::remove_file(&self.link_path).is_err() {
+            #[cfg(not(windows))]
             crate::warning_log!("Unlinking temporary symlink {} failed", self.link_path);
+            #[cfg(windows)]
+            crate::warning_log!("Deleting temporary file {} failed", self.link_path);
         }
         if std::fs::remove_dir(&self.link_dir).is_err() {
             crate::warning_log!("Deleting temporary directory {} failed", self.link_dir);

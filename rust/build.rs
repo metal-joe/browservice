@@ -42,5 +42,11 @@ fn main() {
         // XSetErrorHandler/XSetIOErrorHandler (rust/src/x_error.rs), -lX11 as in
         // the C++ Makefile.
         println!("cargo::rustc-link-lib=X11");
+    } else if target_os == "windows" && cfg!(windows) {
+        // Native Windows build: Pango/fontconfig from a pkg-config setup such
+        // as vcpkg (the C++ build uses vcpkg, see tools/build_windows.py).
+        // Skipped when cross-checking from another host, where pkg-config
+        // would only find the host's libraries.
+        link_pkg_config(&["pangoft2", "fontconfig"]);
     }
 }

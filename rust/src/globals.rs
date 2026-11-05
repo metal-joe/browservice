@@ -1,8 +1,48 @@
 //! Paths and directories, ported from `src/globals.cpp`.
 
+#[cfg(not(windows))]
 use std::ffi::CStr;
 use std::path::Path;
 
+/// The roaming application data folder (`FOLDERID_RoamingAppData`).
+#[cfg(windows)]
+fn app_data_path() -> String {
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_RoamingAppData, SHGetKnownFolderPath};
+    unsafe {
+        let mut path: windows_sys::core::PWSTR = std::ptr::null_mut();
+        if SHGetKnownFolderPath(&FOLDERID_RoamingAppData, 0, std::ptr::null_mut(), &mut path) != 0 {
+            crate::panic_log!(
+                "Requirement 'SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &str) == S_OK' failed"
+            );
+        }
+        let mut len = 0;
+        while *path.add(len) != 0 {
+            len += 1;
+        }
+        let ret = String::from_utf16_lossy(std::slice::from_raw_parts(path, len));
+        CoTaskMemFree(path as *const std::ffi::c_void);
+        ret
+    }
+}
+
+/// `%APPDATA%\Browservice`, the directory for Browservice's own files.
+#[cfg(windows)]
+pub fn dot_dir_path() -> String {
+    format!("{}\\Browservice", app_data_path())
+}
+
+/// Creates the directory unless it already exists as a directory.
+#[cfg(windows)]
+pub fn ensure_dir_exists(path: &str) -> bool {
+    match std::fs::create_dir(path) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Path::new(path).is_dir(),
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(windows))]
 fn home_dir_path() -> String {
     if let Ok(path) = std::env::var("HOME") {
         return path;
@@ -32,11 +72,13 @@ fn home_dir_path() -> String {
 }
 
 /// `~/.browservice`, the directory for Browservice's own files.
+#[cfg(not(windows))]
 pub fn dot_dir_path() -> String {
     format!("{}/.browservice", home_dir_path())
 }
 
 /// Creates the directory (mode 0700) unless it already exists as a directory.
+#[cfg(not(windows))]
 pub fn ensure_dir_exists(path: &str) -> bool {
     use std::os::unix::fs::DirBuilderExt;
     match std::fs::DirBuilder::new().mode(0o700).create(path) {

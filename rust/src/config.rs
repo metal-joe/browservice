@@ -731,11 +731,15 @@ mod tests {
         let (c, mode) = ok(&[]);
         assert_eq!(mode, Mode::Normal);
         assert_eq!(c, Config::default());
+        #[cfg(not(windows))]
         assert_eq!(c.vice_plugin, "retrojsvice.so");
+        #[cfg(windows)]
+        assert_eq!(c.vice_plugin, "retrojsvice.dll");
         assert_eq!(c.start_page, "about:blank");
         assert_eq!(c.window_limit, 32);
         assert_eq!(c.initial_zoom, 1.0);
         assert!(c.block_file_scheme);
+        #[cfg(not(windows))]
         assert!(c.use_dedicated_xvfb);
         assert!(c.show_control_bar);
         assert_eq!(c.show_soft_navigation_buttons, None);
@@ -824,10 +828,9 @@ mod tests {
 
     #[test]
     fn all_options() {
-        let (c, _) = ok(&[
+        let list = [
             "--vice-plugin=/x/y.so",
             "--user-agent=UA",
-            "--use-dedicated-xvfb=No",
             "--block-file-scheme=disabled",
             "--start-page=http://example.com/?a=b",
             "--data-dir=/tmp/d",
@@ -838,9 +841,14 @@ mod tests {
             "--browser-font-render-mode=Antialiasing-Subpixel-RGB",
             "--certificate-check-exceptions=b.com,a.com,a.com",
             "--show-control-bar=0",
-        ]);
+            // --use-dedicated-xvfb does not exist on Windows.
+            #[cfg(not(windows))]
+            "--use-dedicated-xvfb=No",
+        ];
+        let (c, _) = ok(&list);
         assert_eq!(c.vice_plugin, "/x/y.so");
         assert_eq!(c.user_agent, "UA");
+        #[cfg(not(windows))]
         assert!(!c.use_dedicated_xvfb);
         assert!(!c.block_file_scheme);
         assert_eq!(c.start_page, "http://example.com/?a=b");
@@ -982,6 +990,9 @@ mod tests {
         }
     }
 
+    // The reference text was captured from the Linux C++ build (the Windows
+    // build has no --use-dedicated-xvfb and other defaults).
+    #[cfg(not(windows))]
     #[test]
     fn help_output_matches_cpp() {
         // Reference produced by the C++ build (the Browservice part of

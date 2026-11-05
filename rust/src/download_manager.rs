@@ -42,7 +42,10 @@ impl CompletedDownload {
 impl Drop for CompletedDownload {
     fn drop(&mut self) {
         if std::fs::remove_file(&self.path).is_err() {
+            #[cfg(not(windows))]
             crate::warning_log!("Unlinking file {} failed", self.path);
+            #[cfg(windows)]
+            crate::warning_log!("Deleting file {} failed", self.path);
         }
         // The temporary directory is removed when its last user is dropped
         // (the field `_temp_dir` is dropped after this).
@@ -115,13 +118,16 @@ impl DownloadManager {
     }
 
     fn file_path(&self, file_idx: i32) -> String {
-        format!("{}/file_{}.bin", self.temp_dir().path(), file_idx)
+        format!("{}{}file_{}.bin", self.temp_dir().path(), crate::common::PATH_SEP, file_idx)
     }
 
     fn unlink_file(&self, file_idx: i32) {
         let path = self.file_path(file_idx);
         if std::fs::remove_file(&path).is_err() {
+            #[cfg(not(windows))]
             crate::warning_log!("Unlinking file {} failed", path);
+            #[cfg(windows)]
+            crate::warning_log!("Deleting file {} failed", path);
         }
     }
 
