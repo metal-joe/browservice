@@ -203,8 +203,14 @@ pub fn select_api_version() {
 
 /// Runs `CefExecuteProcess`. Returns `Some(exit_code)` if this is a CEF
 /// subprocess that has finished and the program should exit with that code.
-pub fn execute_subprocess(args: &args::Args, app: &mut App) -> Option<i32> {
-    let code = execute_process(Some(args.as_main_args()), Some(app), std::ptr::null_mut());
+/// `sandbox_info` is the Windows sandbox information from `bootstrapc.exe`
+/// (null elsewhere).
+pub fn execute_subprocess(
+    args: &args::Args,
+    app: &mut App,
+    sandbox_info: *mut std::ffi::c_void,
+) -> Option<i32> {
+    let code = execute_process(Some(args.as_main_args()), Some(app), sandbox_info.cast());
     if code >= 0 { Some(code) } else { None }
 }
 
@@ -216,7 +222,13 @@ pub struct InitParams {
 
 /// Initializes CEF with windowless rendering, runs the message loop until the
 /// server has shut down and shuts CEF down. Panics if initialization fails.
-pub fn run_browser_process(args: &args::Args, app: &mut App, params: &InitParams) {
+/// `sandbox_info` as for [`execute_subprocess`].
+pub fn run_browser_process(
+    args: &args::Args,
+    app: &mut App,
+    params: &InitParams,
+    sandbox_info: *mut std::ffi::c_void,
+) {
     let settings = Settings {
         windowless_rendering_enabled: 1,
         command_line_args_disabled: 1,
@@ -230,7 +242,7 @@ pub fn run_browser_process(args: &args::Args, app: &mut App, params: &InitParams
         Some(args.as_main_args()),
         Some(&settings),
         Some(app),
-        std::ptr::null_mut(),
+        sandbox_info.cast(),
     ) != 1
     {
         if get_exit_code() == cef_resultcode_t::CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED as i32

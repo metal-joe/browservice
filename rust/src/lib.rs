@@ -2,6 +2,8 @@
 
 pub mod common;
 
+pub mod app_main;
+
 pub mod bookmarks;
 pub mod button;
 pub mod browser_font_render_mode;
