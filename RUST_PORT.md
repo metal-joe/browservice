@@ -24,6 +24,13 @@ default on Linux), the X error handlers, the PANIC path through CEF's
 `LOG(FATAL)` and the Windows-specific code paths are ported. The Windows code
 is only compile-checked (see "Windows status" below); it has never been run.
 
+**Phase 5:** the Windows sandbox model of the C++ build (a DLL exporting
+`RunConsoleMain`, loaded by CEF's `bootstrapc.exe`) is ported as the
+workspace member `rust/windll`, and `tools/build_windows_rust.ps1` builds and
+packages the Rust port on Windows. Both are compile-checked / reviewed only:
+nothing was linked, packaged or run on Windows (see "Windows sandbox" and
+"Windows build and packaging" below).
+
 ## Ported
 
 Phase 1:
@@ -82,6 +89,14 @@ Phase 4 (process environment, error handling, Windows):
 | `rust/src/cef_app.rs` | `main` in `src/main.cpp` | `CefInitialize` failure with `CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED` panics with the C++ text "Another Browservice instance is running. Close that instance or specify different data directory using --data-dir for each instance to support concurrent instances." (other failures: "Initializing CEF failed"); `enable_panic_using_cef_fatal_error` right after successful initialization. |
 | several modules, `#[cfg(windows)]` | `#ifdef _WIN32` code in `src/*.cpp` | See "Windows status". |
 
+Phase 5 (Windows sandbox and packaging):
+
+| Rust module / file | C++ origin | Status |
+|---|---|---|
+| `rust/windll/lib.rs` (crate `browservice-windll`, cdylib) | `RunConsoleMain` in `src/main.cpp`, `add_library(browservice SHARED ...)` in `winbuild/CMakeLists.txt` | Exports `RunConsoleMain` for `bootstrapc.exe` and passes the sandbox information on; compile-checked only. |
+| `rust/src/app_main.rs` | `main`/`RunConsoleMain` body in `src/main.cpp` | The program, moved from `rust/src/main.rs`; takes the sandbox pointer. |
+| `tools/build_windows_rust.ps1`, `tools/windows_rust/retrojsvice/CMakeLists.txt` | `tools/build_windows.py`, `winbuild/CMakeLists.txt` | Written, not run (no Windows, no PowerShell here). |
+
 Text rendering library choice: the Pango, PangoFT2, GObject and fontconfig
 functions are declared by hand in `rust/src/text.rs` (module `ffi`, about 25
 functions) and linked through `pkg-config --libs pangoft2 fontconfig` in
@@ -119,14 +134,8 @@ files (`libpango1.0-dev` on Debian/Ubuntu) and `pkg-config`.
 
 ## Not ported yet
 
-- The Windows sandbox bootstrap: the C++ Windows build is a DLL exporting
-  `RunConsoleMain` that CEF's `bootstrapc.exe` (copied as `browservice.exe`,
-  see `winbuild/CMakeLists.txt`) loads, passing `sandboxInfo`. The Rust
-  Windows build is a plain console executable that calls
-  `CefExecuteProcess`/`CefInitialize` without sandbox information (the
-  `RunConsoleMain` export, the bootstrap packaging and `cef_sandbox` are not
-  ported). The Windows packaging (`winbuild/`, `tools/build_windows.py`,
-  manifests, MSVC redistributable DLLs) is not ported either.
+- Nothing functional is missing, but the Windows build (sandbox DLL,
+  packaging) has not been built or run on Windows yet (see below).
 - The vice plugin `viceplugins/retrojsvice` stays in C++ and is loaded as a
   shared library through `vice_plugin_api.h`.
 
@@ -154,13 +163,13 @@ The `#ifdef _WIN32` code paths of the C++ sources are ported with
 What was checked: compilation only. `cef-dll-sys` supports only the MSVC
 Windows targets, and its build script needs a Windows CEF distribution; the
 check therefore uses the crate's `dox` feature (no build script, bindings
-only):
+only). Since phase 5 the checks include the bootstrap DLL (`--workspace`):
 
 ```sh
 rustup target add x86_64-pc-windows-gnu x86_64-pc-windows-msvc
-cargo check --release --features stub-patch,cef/dox --all-targets --target x86_64-pc-windows-msvc
-cargo check --release --features stub-patch,cef/dox --all-targets --target x86_64-pc-windows-gnu
-cargo check --release --features cef/dox --target x86_64-pc-windows-msvc
+cargo check --release --workspace --features stub-patch,cef/dox --all-targets --target x86_64-pc-windows-msvc
+cargo check --release --workspace --features stub-patch,cef/dox --all-targets --target x86_64-pc-windows-gnu
+cargo check --release --workspace --features cef/dox --all-targets --target x86_64-pc-windows-msvc
 # all: Finished, no warnings, no errors
 ```
 
@@ -172,6 +181,227 @@ Windows CEF 156.0.15 distribution in `CEF_PATH` and Pango/fontconfig
 through `pkg-config` (e.g. from vcpkg, as `tools/build_windows.py` sets up
 for the C++ build; `rust/build.rs` calls `pkg-config` only when building on
 a Windows host).
+
+## Windows sandbox
+
+### What the C++ build does
+
+`src/main.cpp` defines, for `_WIN32`, `RunConsoleMain(int, char*[], void*
+sandboxInfo, cef_version_info_t*)` instead of `main`, and passes
+`sandboxInfo` to `CefExecuteProcess` and `CefInitialize`.
+`winbuild/CMakeLists.txt` builds Browservice as a DLL (`add_library(...
+SHARED)`), copies `bootstrapc.exe` from the CEF distribution as
+`browservice.exe` and embeds `browservice.exe.manifest` +
+`compatibility.manifest` into it with `mt.exe`. `bootstrapc.exe` (console
+subsystem) loads `browservice.dll` from its directory, initializes the
+sandbox and calls `RunConsoleMain`, in the browser process and in every CEF
+subprocess.
+
+### What CEF 156 and the cef crate support
+
+- CEF 156 has no other way to get a sandbox on Windows: the Windows
+  distribution (`cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64.tar.bz2`,
+  downloaded and listed for this check) contains `bootstrap.exe`,
+  `bootstrapc.exe` and `include/cef_sandbox_win.h`, but no
+  `cef_sandbox.lib`; `cef_sandbox_info_create` is not exported by
+  `libcef.dll` (it is not in the cef-dll-sys bindings either). In CEF's
+  own CMake files, `USE_SANDBOX` on Windows means "client DLL loaded by
+  bootstrap.exe" (it defines `CEF_USE_BOOTSTRAP`), and the sample
+  `tests/cefsimple` is then built as a DLL exporting `RunWinMain`, next to a
+  renamed `bootstrap.exe`. So option (b) of the task ("plain exe with the
+  sandbox enabled") does not exist for CEF 156.
+- The cef crate 156.3.0 supports exactly this model: its `sandbox` feature
+  builds `libcef_dll_wrapper` with `USE_SANDBOX=ON`, its `build_util::win`
+  bundler builds the crate's `cdylib` and copies `bootstrap.exe` as
+  `<name>.exe`, and the upstream example `examples/cefsimple/src/win.rs`
+  (cef-rs repository) is a cdylib exporting `RunWinMain` with
+  `#[unsafe(no_mangle)]`. The bindings of `cef::execute_process` and
+  `cef::initialize` take the `windows_sandbox_info` pointer.
+
+### Chosen model: DLL + `bootstrapc.exe`, as in the C++ build
+
+- `rust/windll` (package `browservice-windll`, workspace member,
+  `crate-type = ["cdylib"]`, output `browservice_windll.dll`) exports
+  `RunConsoleMain` with the signature of `cef_sandbox_win.h` and calls
+  `browservice::app_main::run_main(sandbox_info)`. Like the C++ function it
+  ignores `argc`/`argv`/`version_info`: the command line comes from
+  `GetCommandLineW`/`CommandLineToArgvW` and the module handle from
+  `GetModuleHandle(nullptr)` (`cef::args::Args::new`). On Windows the
+  package enables the cef crate's `sandbox` feature.
+- `rust/src/app_main.rs` holds the program (moved from `main.rs`);
+  `cef_app::execute_subprocess` and `cef_app::run_browser_process` pass the
+  sandbox pointer to `CefExecuteProcess`/`CefInitialize`.
+- `bootstrapc.exe` (not `bootstrap.exe`) because Browservice is a console
+  program, as in the C++ build; the DLL is copied as `browservice.dll` next
+  to the renamed `browservice.exe` by the packaging script.
+- The root package stays a plain executable (`rust/src/main.rs`, null
+  sandbox pointer). On Linux nothing changes. On Windows the plain
+  executable is only a development convenience and is not packaged; it runs
+  CEF without the sandbox information.
+
+### Verified here (Linux host)
+
+```sh
+cargo check --release --workspace --features stub-patch,cef/dox --target x86_64-pc-windows-msvc --all-targets
+#     Finished `release` profile [optimized] target(s) in 12.61s
+cargo check --release --workspace --features stub-patch,cef/dox --target x86_64-pc-windows-gnu --all-targets
+#     Finished `release` profile [optimized] target(s) in 13.07s
+cargo tree -p browservice-windll --target x86_64-pc-windows-msvc -e features -i cef-dll-sys --features cef/dox
+# shows cef-dll-sys feature "sandbox" <- cef feature "sandbox" <- browservice-windll
+```
+
+The link step of the DLL cannot be done here (no `link.exe` and no Windows
+SDK import libraries). Running it with `lld-link` and `-C save-temps`
+shows the export definition file rustc generates for the DLL, and the
+object file defines the unmangled symbol:
+
+```sh
+cargo rustc --release -p browservice-windll --features cef/dox \
+    --target x86_64-pc-windows-msvc -- -C linker=lld-link -C save-temps --print link-args
+cat .../deps/rustc*/lib.def
+# LIBRARY
+# EXPORTS
+#   RunConsoleMain
+llvm-nm .../deps/browservice_windll*.o | grep RunConsoleMain
+# 00000000 T RunConsoleMain
+# (the link then fails: lld-link: error: could not open 'kernel32.lib')
+```
+
+On Linux, `cargo build --release --features stub-patch` (no warnings),
+`cargo test --release --features stub-patch` (52 passed, 0 failed, 1
+ignored), `./browservice --version`/`--bogus` (same output and exit codes as
+before) and the smoke test with the dedicated Xvfb (`ALL CHECKS PASSED`,
+exit code 0) still pass after moving the program into `app_main`.
+
+### Not verified
+
+Everything at run time on Windows: that `bootstrapc.exe` loads the Rust DLL
+and calls `RunConsoleMain`, that the sandbox is active for the renderer and
+GPU processes, and that the Rust standard library behaves in a DLL entered
+from `bootstrapc.exe` (expected, but untested). Code signing was not
+looked into: like the C++ distribution, the packaged files are unsigned.
+
+## Windows build and packaging
+
+`tools/build_windows_rust.ps1` is the Rust port's counterpart of
+`tools/build_windows.py` + `winbuild/CMakeLists.txt`. It runs on Windows
+(Windows PowerShell 5.1 or PowerShell 7) and skips steps whose result is
+already up to date, so it can be re-run:
+
+1. MSVC environment: imports `vcvars64.bat` (found with `vswhere`) unless
+   `cl.exe` is already in `PATH`; checks for `cargo`, `git`, `tar`, `cmake`,
+   `ninja`, `mt`, `icacls` and Python 3.
+2. CEF 156.0.15+gcf671c0+chromium-156.0.8078.80, Windows 64-bit:
+   - `-CefTarball <patched_cef_..._windows64.tar.bz2>`: the patched CEF
+     (Browservice Chromium patch), required for a production build, as for
+     `tools/build_windows.py`;
+   - otherwise the stock standard distribution
+     `cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64.tar.bz2`
+     from `https://cef-builds.spotifycdn.com/` (file name and SHA-1
+     `dec540c7236c7c98c033f78618c010e3ae322f82` taken from the `windows64`
+     entry of `https://cef-builds.spotifycdn.com/index.json`; the download
+     was checked against this SHA-1 here). Stock CEF lacks the patch
+     symbols, so this is allowed only together with `-StubPatch`.
+   The tarball is extracted with `tar.exe` to `<BuildDir>\cef`, the version
+   in `include\cef_version.h` must match the cef crate, and the flat layout
+   of cef-dll-sys is created in `<BuildDir>\cef_rust` (`Release\*`,
+   `Resources\*`, `include`, `cmake`, `libcef_dll`, `CMakeLists.txt`,
+   `archive.json`), which becomes `CEF_PATH`.
+3. vcpkg (cloned into `<BuildDir>\vcpkg` or `-VcpkgRoot`), triplet
+   `x64-windows`: `pango fontconfig pkgconf` (Rust text renderer, through
+   `pkg-config`; `rust/build.rs` now honours `PKG_CONFIG`, set to vcpkg's
+   `pkgconf.exe`) and `openssl poco[netssl] libjpeg-turbo` (retrojsvice).
+4. `cargo build --release -p browservice-windll` (`--features stub-patch`
+   with `-StubPatch`), i.e. `target\release\browservice_windll.dll`. The
+   cef-dll-sys build script builds `libcef_dll_wrapper` with CMake + Ninja +
+   MSVC.
+5. `retrojsvice.dll` (C++, unchanged sources): `gen_html_cpp.py` output is
+   written to `<BuildDir>\retrojsvice\gen\html.cpp` (not into
+   `viceplugins/`), then the standalone CMake project
+   `tools/windows_rust/retrojsvice` (same target as in
+   `winbuild/CMakeLists.txt`) is built with the Visual Studio generator and
+   the vcpkg MSBuild integration (`Directory.Build.props/.targets`, as in
+   `tools/build_windows.py`).
+6. `<OutputDir>\<DistName>` (default `release\browservice-<git
+   describe>-windows64`): `bootstrapc.exe` as `browservice.exe` with the two
+   manifests of `winbuild/` embedded by `mt.exe`, the Rust DLL as
+   `browservice.dll`, `retrojsvice.dll`, all DLLs of the vcpkg `bin`
+   directory (pango/glib/fontconfig/freetype/harfbuzz, Poco, OpenSSL,
+   libjpeg-turbo and their dependencies; the C++ build gets the same through
+   vcpkg's app-local copying), the CEF binary files (`chrome_elf.dll`,
+   `d3dcompiler_47.dll`, `dxcompiler.dll`, `libcef.dll`,
+   `v8_context_snapshot.bin`, `vk_swiftshader.dll`, `vk_swiftshader_icd.json`,
+   `vulkan-1.dll`) and resources (`chrome_100_percent.pak`,
+   `chrome_200_percent.pak`, `resources.pak`, `icudtl.dat`, `locales\`) as
+   listed in the CEF 156 `cmake/cef_variables.cmake`, and `msvcp140.dll`,
+   `vcruntime140.dll`, `vcruntime140_1.dll` from the MSVC redistributable
+   directory. The LPAC ACL that CEF's `SET_LPAC_ACLS` sets for sandboxed
+   samples is granted on the folder (`icacls ... /grant
+   *S-1-15-2-2:(OI)(CI)(RX)`); the C++ build does not do this, and ACLs are
+   not stored in the zip.
+7. `<OutputDir>\<DistName>.zip` (folder at the root of the zip, like
+   `tools/build_windows.py`). With `-StubPatch` the folder name ends in
+   `-stubpatch-TEST-ONLY` and no zip is created, so the stub never ends up in
+   a release package.
+
+### Commands to run on Windows
+
+Requirements: Visual Studio 2022 (or newer) with the workload "Desktop
+development with C++" (MSVC x64, Windows SDK, "C++ CMake tools for
+Windows", which provide `cmake` and `ninja`), Rust via rustup with the
+`stable-x86_64-pc-windows-msvc` toolchain, Git, Python 3. Use a short
+checkout path without spaces (e.g. `C:\bs`); the script warns above 40
+characters because of the 260 character path limit in the CEF wrapper build.
+
+```powershell
+git clone -b <branch of the Rust port> <repository URL> C:\bs
+cd C:\bs
+
+# Production build with the patched CEF (Browservice Chromium patch):
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_windows_rust.ps1 `
+    -CefTarball C:\path\to\patched_cef_windows64.tar.bz2
+# -> release\browservice-<version>-windows64\ and release\browservice-<version>-windows64.zip
+
+# Test build against the stock CEF (downloads it, about 370 MB):
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\build_windows_rust.ps1 -StubPatch
+# -> release\browservice-<version>-windows64-stubpatch-TEST-ONLY\ (no zip)
+
+# Try it:
+cd release\browservice-<version>-windows64
+.\browservice.exe --version
+.\browservice.exe --vice-opt-http-listen-addr=127.0.0.1:8080
+```
+
+Other options: `-BuildDir` (default `build_windows_rust\`, ignored by git),
+`-VcpkgRoot` (existing vcpkg), `-OutputDir` (default `release\`),
+`-DistName`, `-CMakeGenerator` (default from the Visual Studio version).
+A patched CEF 156 Windows tarball is not part of this repository; it is
+built with `tools/build_patched_cef.py` (see `winbuild/README.md`) unless a
+matching one is published on the Browservice releases page.
+
+### Verified here and not
+
+- PowerShell is not installed on this Linux host (`pwsh` and `powershell`
+  not found; running a downloaded PowerShell was not permitted), so the
+  script was **not parsed or run**. It was reviewed by hand for Windows
+  PowerShell 5.1 pitfalls (stderr redirection with `ErrorActionPreference
+  Stop`, single-element arrays, UTF-8 without BOM for `archive.json`), and
+  a rough delimiter balance check (brackets, braces, strings, comments)
+  passes.
+- The CEF file name and SHA-1 were verified against the CEF build index,
+  and the downloaded archive was listed: `Release\bootstrapc.exe`,
+  `Release\libcef.lib`, every file of the copy lists above, and
+  `include\cef_sandbox_win.h` are present.
+- `tools/windows_rust/retrojsvice/CMakeLists.txt` was checked on Linux with
+  the Visual Studio generator check removed and Linux link libraries
+  added: `retrojsvice` builds from `viceplugins/retrojsvice/src` plus an
+  `html.cpp` generated outside `viceplugins/` (the include of
+  `../src/html.hpp` resolves through the include directory), and the
+  generated `html.cpp` is byte-identical to the output of
+  `./gen_html_cpp.py`.
+- Not verified: the vcpkg installation, the MSVC link of the Rust DLL
+  against vcpkg's Pango import libraries, `mt.exe`, `icacls`, the zip,
+  and the resulting distribution at run time.
 
 ## Building
 
@@ -237,6 +467,8 @@ nothing with it. A binary built with the stub prints a warning at startup in
 normal mode.
 
 ## Verification results
+
+Phase 5: see "Windows sandbox" and "Windows build and packaging" above.
 
 ### Phase 4: dedicated Xvfb, X errors, PANIC path, Windows
 
