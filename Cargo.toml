@@ -10,6 +10,12 @@ autotests = false
 autoexamples = false
 autobenches = false
 
+[workspace]
+# rust/windll: the Windows DLL loaded by CEF's bootstrapc.exe (sandbox).
+# Plain `cargo build` in the root builds only the root package.
+members = [".", "rust/windll"]
+default-members = ["."]
+
 [lib]
 name = "browservice"
 path = "rust/src/lib.rs"

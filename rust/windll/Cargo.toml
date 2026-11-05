@@ -1,0 +1,34 @@
+[package]
+name = "browservice-windll"
+version = "0.9.12"
+edition = "2024"
+description = "Browservice as a DLL for CEF's bootstrapc.exe (Windows sandbox)"
+license = "MIT"
+publish = false
+
+# Windows only: the DLL that CEF's bootstrapc.exe loads (the C++ Windows build
+# is the same kind of DLL, see winbuild/CMakeLists.txt). bootstrapc.exe,
+# renamed to browservice.exe, loads browservice.dll from its own directory,
+# so tools/build_windows_rust.ps1 copies browservice_windll.dll there under
+# that name. On other targets the library is empty.
+[lib]
+name = "browservice_windll"
+path = "lib.rs"
+crate-type = ["cdylib"]
+
+[features]
+default = []
+# TEST/DEV ONLY, see the feature of the same name in the root Cargo.toml.
+stub-patch = ["browservice/stub-patch"]
+
+[dependencies]
+browservice = { path = "../.." }
+# Same pin as the root package. A direct dependency so that `--features
+# cef/dox` can be given for cross checks of this package.
+cef = { version = "=156.3.0", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+# Builds libcef_dll_wrapper with USE_SANDBOX=ON (which defines
+# CEF_USE_BOOTSTRAP on Windows), as the CEF CMake project does for client DLLs
+# loaded by bootstrap(c).exe.
+cef = { version = "=156.3.0", default-features = false, features = ["sandbox"] }
