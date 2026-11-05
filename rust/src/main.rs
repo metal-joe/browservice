@@ -79,6 +79,10 @@ fn run() -> i32 {
         return 0;
     }
 
+    // Ignore non-fatal X errors
+    #[cfg(not(windows))]
+    browservice::x_error::ignore_non_fatal_x_errors();
+
     let (params, request_context_cache_path) = if data_dir.is_empty() {
         // Incognito mode.
         let root_cache_path = format!("{dot_dir}/cef");

@@ -33,4 +33,6 @@ pub mod server;
 pub mod widget;
 pub mod window;
 #[cfg(not(windows))]
+pub mod x_error;
+#[cfg(not(windows))]
 pub mod xvfb;

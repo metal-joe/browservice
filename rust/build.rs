@@ -38,5 +38,9 @@ fn main() {
         println!("cargo::rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
 
         link_pkg_config(&["pangoft2", "fontconfig"]);
+
+        // XSetErrorHandler/XSetIOErrorHandler (rust/src/x_error.rs), -lX11 as in
+        // the C++ Makefile.
+        println!("cargo::rustc-link-lib=X11");
     }
 }
