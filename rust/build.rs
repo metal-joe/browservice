@@ -2,12 +2,20 @@ use std::process::Command;
 
 /// Links the system libraries of the text renderer (`rust/src/text.rs`):
 /// PangoFT2 and fontconfig, found with `pkg-config` like in the C++ Makefile.
+/// The `PKG_CONFIG` environment variable selects another pkg-config program
+/// (on Windows, the `pkgconf.exe` of vcpkg, see tools/build_windows_rust.ps1).
 fn link_pkg_config(packages: &[&str]) {
-    let output = Command::new("pkg-config")
+    let program = std::env::var("PKG_CONFIG").unwrap_or_else(|_| "pkg-config".to_string());
+    let output = Command::new(&program)
         .arg("--libs")
         .args(packages)
         .output()
-        .expect("running pkg-config failed (pkg-config and the pangoft2 development files are required)");
+        .unwrap_or_else(|err| {
+            panic!(
+                "running {program} failed ({err}); pkg-config and the pangoft2 development \
+                 files are required"
+            )
+        });
     if !output.status.success() {
         panic!(
             "pkg-config --libs {} failed: {}",
@@ -26,6 +34,7 @@ fn link_pkg_config(packages: &[&str]) {
 
 fn main() {
     println!("cargo::rerun-if-changed=rust/build.rs");
+    println!("cargo::rerun-if-env-changed=PKG_CONFIG");
     println!("cargo::rerun-if-env-changed=PKG_CONFIG_PATH");
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
