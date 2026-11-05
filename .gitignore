@@ -41,3 +41,6 @@ GPUCache
 
 # Rust build output
 /target/
+
+# Windows build of the Rust port (tools/build_windows_rust.ps1)
+/build_windows_rust/
