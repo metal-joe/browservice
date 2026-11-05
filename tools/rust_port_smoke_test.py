@@ -238,20 +238,26 @@ def check_download(s):
     try:
         s.goto("http://127.0.0.1:18082/smoke.bin")
 
+        def button_starts(im):
+            # The top-left white frame pixel of the button, preceded by the
+            # gray (192) bar background; the bar without the button has no
+            # such pixel left of the quality selector.
+            row = [im.getpixel((x, 1)) for x in range(im.size[0])]
+            return [x for x in range(1, min(600, len(row)))
+                    if row[x] == (255, 255, 255) and row[x - 1] == (192, 192, 192)]
+
         def download_button(im):
             # The button (88 pixels wide, enabled: black text on gray) is
-            # left of the quality selector at the right end of the bar.
+            # left of the quality selector at the right end of the bar. The
+            # black pixel count alone is also reached by the "Quality" label
+            # and the selector text, so the button frame is required too.
             if px(im, 100, 100 - Y) is None:
                 return False
             black = sum(1 for x in range(500, 640) for y in range(3, 20)
                         if im.getpixel((x, y)) == (0, 0, 0))
-            return black > 150
-        wait_for(s, download_button, "download button shown in the control bar")
-        # Find the button: its top-left white frame pixel left of the quality
-        # selector frame (gray 128).
-        img, _, _ = s.image()
-        row = [img.getpixel((x, 1)) for x in range(img.size[0])]
-        start = max(x for x in range(1, 600) if row[x] == (255, 255, 255) and row[x - 1] == (192, 192, 192))
+            return black > 150 and bool(button_starts(im))
+        img = wait_for(s, download_button, "download button shown in the control bar")
+        start = max(button_starts(img))
         bx, by = start + 44, 10
         s.image((f"MMO_{bx}_{by - Y}", f"MDN_{bx}_{by - Y}_0", f"MUP_{bx}_{by - Y}_0"))
         deadline = time.time() + 20
