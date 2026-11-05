@@ -19,6 +19,11 @@ in the window again. The window images of the Rust and C++ binaries were
 compared pixel by pixel for the scenarios listed under "Phase 3" below and
 are identical.
 
+**Phase 4:** the dedicated Xvfb X server (`--use-dedicated-xvfb`, on by
+default on Linux), the X error handlers, the PANIC path through CEF's
+`LOG(FATAL)` and the Windows-specific code paths are ported. The Windows code
+is only compile-checked (see "Windows status" below); it has never been run.
+
 ## Ported
 
 Phase 1:
@@ -46,7 +51,7 @@ Phase 2:
 | `rust/src/download_manager.rs` | `src/download_manager.{hpp,cpp}` | Complete: pending queue, accept, progress, cancel, `CompletedDownload` that deletes the file (and releases the temporary directory) when the plugin calls the cleanup function from any thread. |
 | `rust/src/scheme.rs` | `src/scheme.{hpp,cpp}` | `browservice://bookmarks/` and the 404 page (see the deviation below). |
 | `rust/src/bookmarks.rs` | `src/bookmarks.{hpp,cpp}` | Complete: same file format and location (`~/.browservice/bookmarks`), atomic save, cache by URL, page with removal form. |
-| `rust/src/temp_dir.rs` | `src/temp_dir.{hpp,cpp}` | Complete (Linux). |
+| `rust/src/temp_dir.rs` | `src/temp_dir.{hpp,cpp}` | Complete (Windows variant since phase 4, compile-checked only). |
 | `rust/src/data_url.rs`, `rust/src/sha3.rs` | `src/data_url.{hpp,cpp}`, `src/tiny_sha3` | Complete; base64 and URI coding through the CEF functions, SHA3-256 ported from tiny_sha3. |
 | `rust/src/clipboard.rs` | `src/clipboard.{hpp,cpp}` | Complete, through the patch symbols. |
 | `rust/src/timeout.rs` | `src/timeout.{hpp,cpp}` | Complete. |
@@ -66,6 +71,16 @@ Phase 3 (control bar and text rendering):
 | `rust/src/find_bar.rs` | `src/find_bar.{hpp,cpp}` | Complete: open/close/activate, incremental find, find next/previous buttons, Enter/Esc, not-found background. |
 | `rust/src/quality_selector.rs` | `src/quality_selector.{hpp,cpp}` | Complete: label matching (exact, then ignoring spaces and case), up/down buttons with 500/50 ms mouse repeat, Up/Down keys, wheel, disabled arrows at the ends. |
 | `rust/src/control_bar.rs` | `src/control_bar.{hpp,cpp}` | Complete: all icons (patterns and palettes copied from the C++ source), `Layout` with the same arithmetic, frame/separators/labels/address box/security icon rendering, loading bar animation (30 ms timeout, 5 s period), download button and progress bars, find bar, quality selector, clipboard button, soft navigation buttons, bookmark toggle (writes `~/.browservice/bookmarks`), and all events wired to the window as in C++ (address submit, go, bookmarks page, find, clipboard, back/forward/refresh/home, quality change, pending download accepted). |
+
+Phase 4 (process environment, error handling, Windows):
+
+| Rust module | C++ origin | Status |
+|---|---|---|
+| `rust/src/xvfb.rs` | `src/xvfb.{hpp,cpp}` | Complete (not on Windows): `.Xauthority` in a temporary directory with a dummy cookie for display 0 (added with `xauth -f <file> source -` through `/bin/sh`, as `popen` does), `Xvfb -displayfd <fd> -auth <file> -screen 0 640x480x24` started with fork/exec in its own process group, display number read from the pipe and parsed like `parseDisplay`, the real cookie added for that display, `DISPLAY`/`XAUTHORITY` set, and on shutdown SIGTERM, `waitpid` and removal of the file and directory. `main` creates it after the vice plugin context and drops it after `CefShutdown`, like the C++ `main`. Same log messages. |
+| `rust/src/x_error.rs` | `XSetErrorHandler`/`XSetIOErrorHandler` in `src/main.cpp` | Complete: handlers that return 0, installed right before CEF initialization; `XSetErrorHandler` and `XSetIOErrorHandler` are declared by hand and libX11 is linked with `-lX11` from `rust/build.rs` (as in the Makefile). |
+| `rust/src/common.rs` | `Panicker`, `enablePanicUsingCEFFatalError` in `src/common.{hpp,cpp}` | Complete: `PANIC @ LOCATION: MSG` on stderr, then `abort()` before and `cef_log(..., LOG_FATAL, "")` (i.e. `LOG(FATAL)`) after successful CEF initialization. In addition, a panic hook routes Rust panics (`unwrap`, `expect`, `assert!`) to the same output and termination path. |
+| `rust/src/cef_app.rs` | `main` in `src/main.cpp` | `CefInitialize` failure with `CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED` panics with the C++ text "Another Browservice instance is running. Close that instance or specify different data directory using --data-dir for each instance to support concurrent instances." (other failures: "Initializing CEF failed"); `enable_panic_using_cef_fatal_error` right after successful initialization. |
+| several modules, `#[cfg(windows)]` | `#ifdef _WIN32` code in `src/*.cpp` | See "Windows status". |
 
 Text rendering library choice: the Pango, PangoFT2, GObject and fontconfig
 functions are declared by hand in `rust/src/text.rs` (module `ffi`, about 25
@@ -104,16 +119,59 @@ files (`libpango1.0-dev` on Debian/Ubuntu) and `pkg-config`.
 
 ## Not ported yet
 
-- Dedicated Xvfb (`src/xvfb.cpp`). The `--use-dedicated-xvfb` option is parsed,
-  but the Rust binary prints a warning and uses the `DISPLAY` of the
-  environment.
-- `XSetErrorHandler`/`XSetIOErrorHandler` (ignoring non-fatal X errors) and
-  panicking through CEF's `LOG(FATAL)` after initialization; panics abort the
-  process directly.
-- Windows-specific code paths (Windows option defaults are mirrored in the
-  config, but the Windows build is not done or tested).
+- The Windows sandbox bootstrap: the C++ Windows build is a DLL exporting
+  `RunConsoleMain` that CEF's `bootstrapc.exe` (copied as `browservice.exe`,
+  see `winbuild/CMakeLists.txt`) loads, passing `sandboxInfo`. The Rust
+  Windows build is a plain console executable that calls
+  `CefExecuteProcess`/`CefInitialize` without sandbox information (the
+  `RunConsoleMain` export, the bootstrap packaging and `cef_sandbox` are not
+  ported). The Windows packaging (`winbuild/`, `tools/build_windows.py`,
+  manifests, MSVC redistributable DLLs) is not ported either.
 - The vice plugin `viceplugins/retrojsvice` stays in C++ and is loaded as a
   shared library through `vice_plugin_api.h`.
+
+## Windows status
+
+The `#ifdef _WIN32` code paths of the C++ sources are ported with
+`#[cfg(windows)]`, using the `windows-sys` crate (Windows-only dependency):
+
+| C++ (`#ifdef _WIN32`) | Rust |
+|---|---|
+| `SetConsoleCtrlHandler(handleTermSignal)` instead of `signal(SIGINT/SIGTERM)` (`src/main.cpp`) | `common::register_term_signal_handler`, handler logs `Got control signal N, initiating shutdown` |
+| `GetCommandLineW` + `CommandLineToArgvW`, wide arguments converted to UTF-8 for `Config::read` (`RunConsoleMain`, `src/config.cpp`) | `common::command_line_args` (`ERROR: Reading command line failed`, exit 1, on failure) |
+| `%APPDATA%\Browservice` from `SHGetKnownFolderPath(FOLDERID_RoamingAppData)`, `CreateDirectory` (`src/globals.cpp`) | `globals::dot_dir_path`, `globals::ensure_dir_exists` |
+| `GetTempPathW` + `browservicetmp_` + 16 random characters, `CreateDirectoryW`/`RemoveDirectoryW` (`src/temp_dir.cpp`) | `temp_dir::TempDir` |
+| `PathSep` `\` | `common::PATH_SEP` (bookmark file, CEF cache directory, download files, upload links) |
+| Upload: file copied instead of symlinked (`src/vice.cpp`) | `vice::ViceFileUpload` |
+| `MoveFileW`/`ReplaceFileW` for the bookmark file, temporary file kept on failure (`src/bookmarks.cpp`) | `bookmarks::replace_file` |
+| `DeleteFileW` messages "Deleting file ... failed" (`src/download_manager.cpp`) | `download_manager` |
+| `_putenv_s("FREETYPE_PROPERTIES", ...)` (`src/text.cpp`) | `text::FreeType2SetEnv` (C runtime `getenv`/`_putenv_s`, because FreeType reads the C runtime environment) |
+| No `native_key_code`; CHAR event only for keys with a character, with the character as `windows_key_code` (`src/browser_area.cpp`) | `browser_area` |
+| No ANGLE/SwiftShader switches, no `--use-dedicated-xvfb`, `retrojsvice.dll` default (`src/main.cpp`, `src/config_defs.hpp`) | already in phases 1 and 2 |
+| `random_device` | `BCryptGenRandom` (system preferred RNG) |
+| `LoadLibraryA`/`GetProcAddress`/`FreeLibrary` (`src/vice.cpp`) | `libloading` (`LoadLibraryExW`) |
+
+What was checked: compilation only. `cef-dll-sys` supports only the MSVC
+Windows targets, and its build script needs a Windows CEF distribution; the
+check therefore uses the crate's `dox` feature (no build script, bindings
+only):
+
+```sh
+rustup target add x86_64-pc-windows-gnu x86_64-pc-windows-msvc
+cargo check --release --features stub-patch,cef/dox --all-targets --target x86_64-pc-windows-msvc
+cargo check --release --features stub-patch,cef/dox --all-targets --target x86_64-pc-windows-gnu
+cargo check --release --features cef/dox --target x86_64-pc-windows-msvc
+# all: Finished, no warnings, no errors
+```
+
+(Without `cef/dox`, `cargo check --target x86_64-pc-windows-gnu` fails in
+the `cef-dll-sys` build script with `Unsupported target triplet:
+x86_64-pc-windows-gnu`.) Nothing was linked or run on Windows: the Windows
+runtime behavior is **untested**. A real Windows build needs MSVC, the
+Windows CEF 156.0.15 distribution in `CEF_PATH` and Pango/fontconfig
+through `pkg-config` (e.g. from vcpkg, as `tools/build_windows.py` sets up
+for the C++ build; `rust/build.rs` calls `pkg-config` only when building on
+a Windows host).
 
 ## Building
 
@@ -143,6 +201,8 @@ cargo build --release
 
 The text renderer needs `pkg-config` and the PangoFT2 development files
 (`pangoft2` and `fontconfig` pkg-config packages), as for the C++ build.
+On Linux the binary also links libX11 (`libx11-dev`), and the default
+`--use-dedicated-xvfb=yes` needs `Xvfb` and `xauth` in `PATH` at run time.
 
 Development/test build against **stock** CEF:
 
@@ -177,6 +237,118 @@ nothing with it. A binary built with the stub prints a warning at startup in
 normal mode.
 
 ## Verification results
+
+### Phase 4: dedicated Xvfb, X errors, PANIC path, Windows
+
+Same environment as before (stock CEF 156 prepared with
+`tools/prepare_cef_for_rust.sh` into a new directory, `retrojsvice.so` from
+the C++ build in `target/release/`). Xvfb 21.1.12 and xauth from the distribution.
+
+```sh
+cargo build --release --features stub-patch          # no warnings
+cargo test --release --features stub-patch           # 52 passed, 0 failed, 1 ignored
+xvfb-run -a cargo test --release --features stub-patch   # 52 passed (X error test active)
+```
+
+1. Dedicated Xvfb: started with `DISPLAY` and `XAUTHORITY` removed from the
+   environment and without `xvfb-run`:
+
+   ```sh
+   cd target/release
+   env -u DISPLAY -u XAUTHORITY ./browservice --chromium-args=no-sandbox \
+       --vice-opt-http-listen-addr=127.0.0.1:18081 &
+   curl -s -o /dev/null -w "status=%{http_code} type=%{content_type} size=%{size_download}\n" \
+       http://127.0.0.1:18081/
+   pgrep -a -P $! Xvfb
+   kill -TERM $!; wait $!; pgrep -a Xvfb
+   ```
+
+   Output: `status=200 type=text/html; charset=UTF-8 size=218`; the child
+   `Xvfb -displayfd 4 -auth /tmp/browservicetmp_q9rXuq/.Xauthority -screen 0
+   640x480x24` in its own process group (PGID = its PID); after SIGTERM the
+   browservice exit code is 0, the Xvfb PID no longer exists and `pgrep -a
+   Xvfb` finds nothing. Log:
+
+   ```
+   INFO @ rust/src/xvfb.rs:77 -- Starting Xvfb X server as child process
+   INFO @ rust/src/xvfb.rs:171 -- Xvfb X server :0 successfully started
+   ...
+   INFO @ rust/src/main.rs:114 -- CEF shut down cleanly
+   INFO @ rust/src/xvfb.rs:211 -- Sending SIGTERM to the Xvfb X server child process to shut it down
+   INFO @ rust/src/xvfb.rs:216 -- Waiting for Xvfb child process to shut down
+   INFO @ rust/src/xvfb.rs:228 -- Successfully shut down Xvfb X server
+   ```
+
+   The smoke test (`tools/rust_port_smoke_test.py`) passes with the
+   dedicated Xvfb (`ALL CHECKS PASSED`, repeated 6 times) and with
+   `xvfb-run -a ... --use-dedicated-xvfb=no` (repeated 6 times). Note: the
+   test has to signal only the main browservice process; `pkill -x
+   browservice` also kills the CEF subprocesses, after which CEF ends the
+   main process with `FATAL: GPU process isn't usable. Goodbye.` (exit 133)
+   and the dedicated Xvfb is left running, as it would be for the C++
+   build, which also does not clean up on a crash.
+
+   The smoke test's download check was made robust in phase 4: it waited
+   for a black pixel count that the "Quality" label and selector text reach
+   on their own, so it sometimes looked for the download button before it
+   was drawn (`ValueError: max() iterable argument is empty`); it now also
+   waits for the button frame.
+
+2. X errors: the unit test `x_error::tests::protocol_error_is_ignored`
+   (runs when `DISPLAY` is set) maps a non-existent window, which makes the
+   X server return a BadWindow error, and passes. The same request in a
+   program with the default Xlib handler prints `X Error of failed request:
+   BadWindow (invalid Window parameter)` and exits with code 1 (checked
+   with a small ctypes script under `xvfb-run`).
+
+3. PANIC path:
+
+   - After CEF initialization, with the test plugin shim
+     `tools/rust_port_panic_test_plugin.c` (build command in the file),
+     which calls the `closeWindow` callback from another thread outside
+     `vicePluginAPI_pumpEvents` 5 seconds after start:
+
+     ```sh
+     xvfb-run -a ./browservice --use-dedicated-xvfb=no --chromium-args=no-sandbox \
+         --vice-plugin=panicvice.so --vice-opt-http-listen-addr=127.0.0.1:18081
+     ```
+
+     Rust (exit code 133, SIGTRAP from CEF's fatal error handling):
+
+     ```
+     PANIC @ rust/src/vice.rs:702: Vice plugin unexpectedly called a callback in a thread that is not currently executing vicePluginAPI_pumpEvents
+     [4385:4458:1105/063735.149335:FATAL:rust/src/common.rs:32]
+     Trace/breakpoint trap
+     ```
+
+     C++ binary, same shim (exit code 133):
+
+     ```
+     PANIC @ src/vice.cpp:674: Vice plugin unexpectedly called a callback in a thread that is not currently executing vicePluginAPI_pumpEvents
+     [4507:4580:1105/063806.832022:FATAL:src/common.cpp:120]
+     Trace/breakpoint trap
+     ```
+
+   - Before CEF initialization panics abort (exit code 134). The unit test
+     `common::tests::panic_hook_reports_like_panic_macro` runs a child that
+     calls `expect` on `None` with the panic hook installed and checks for
+     `PANIC @ rust/src/common.rs:...: value missing` and SIGABRT.
+
+   - Second instance with the same root cache path (first instance started
+     with default options, second one with another listen address):
+
+     ```
+     PANIC @ rust/src/cef_app.rs:238: Another Browservice instance is running. Close that instance or specify different data directory using --data-dir for each instance to support concurrent instances.
+     Aborted
+     ```
+
+     Exit code 134; the C++ binary prints the same text (`PANIC @
+     src/main.cpp:297: ...`) with exit code 134.
+
+4. Windows: compile-checked only, see "Windows status" above.
+
+Not verified in phase 4: anything on Windows at run time, and the patched
+CEF (all runs used stock CEF with the `stub-patch` feature).
 
 ### Phase 3: control bar and text rendering
 
